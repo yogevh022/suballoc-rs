@@ -17,14 +17,15 @@ pub(crate) fn test_suballoc_de() {
     const LOOPS: usize = 10_000;
     let mut suballoc = SubAllocator::new(CAPACITY);
     let mut allocs = Vec::default();
-    allocs.push(suballoc.allocate(1997).unwrap());
-    for i in 0..LOOPS {
-        if i % 7 == 0 {
-            suballoc.deallocate(allocs.pop().unwrap()).unwrap();
+    for i in 0..10 {
+        if i == 0 {
+            allocs.push(suballoc.allocate(i*100).unwrap());
         } else {
-            allocs.push(suballoc.allocate(i % 76).unwrap());
+            suballoc.allocate(i*100).unwrap();
         }
     }
+    suballoc.deallocate(allocs.pop().unwrap()).unwrap();
+    println!("free: {} used: {} frag: {}", suballoc.free(), suballoc.used(), suballoc.fragment_count());
 }
 
 pub(crate) fn test_suballoc() {
