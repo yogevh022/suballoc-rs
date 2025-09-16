@@ -4,5 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-fxhash = "0.2.1"
 rand = "0.10.0-rc.0"
+rustc-hash = "2.1.1"
+
+[profile.dev]
+strip = false
+debug = true
+
+[profile.release]
+strip = false
+debug = true
+lto = "fat"
