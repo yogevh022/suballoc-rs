@@ -107,10 +107,11 @@ impl SubAllocator {
         debug_assert!(alloc_start >= block.prev_space);
         let greedy_idx = alloc_start - block.prev_space;
 
+        if block.prev_space == 0 {
+            self.free_blocks_indices.push(greedy_idx);
+        }
+
         if next_block_idx == self.capacity {
-            if block.prev_space == 0 {
-                self.free_blocks_indices.push(greedy_idx);
-            }
             block.size += block.prev_space;
             block.prev_space = 0;
             self.free_blocks[greedy_idx] = Some(block);
@@ -129,9 +130,6 @@ impl SubAllocator {
             block.prev_space = 0;
             self.used_blocks[next_block_idx].prev_space = block.size;
             self.free_blocks[greedy_idx] = Some(block);
-        }
-        if block.prev_space == 0 {
-            self.free_blocks_indices.push(greedy_idx);
         }
         Ok(())
     }
