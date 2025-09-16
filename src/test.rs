@@ -12,6 +12,21 @@ macro_rules! hotloop {
     }};
 }
 
+pub(crate) fn test_suballoc_de() {
+    const CAPACITY: usize = 1_500_000;
+    const LOOPS: usize = 10_000;
+    let mut suballoc = SubAllocator::new(CAPACITY);
+    let mut allocs = Vec::default();
+    allocs.push(suballoc.allocate(1997).unwrap());
+    for i in 0..LOOPS {
+        if i % 7 == 0 {
+            suballoc.deallocate(allocs.pop().unwrap()).unwrap();
+        } else {
+            allocs.push(suballoc.allocate(i % 76).unwrap());
+        }
+    }
+}
+
 pub(crate) fn test_suballoc() {
     const CAPACITY: usize = 10_000_000;
     const LOOPS: usize = 10_000_000;

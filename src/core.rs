@@ -5,7 +5,7 @@ pub enum SubAllocatorError {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
-struct MemBlock {
+pub struct MemBlock {
     size: usize,
     prev_space: usize,
 }
@@ -22,9 +22,9 @@ impl MemBlock {
 #[derive(Debug, Clone)]
 pub struct SubAllocator {
     capacity: usize,
-    free_blocks_indices: Vec<usize>,
-    free_blocks: Vec<MemBlock>,
-    used_blocks: Vec<MemBlock>,
+    pub free_blocks_indices: Vec<usize>,
+    pub free_blocks: Vec<MemBlock>,
+    pub used_blocks: Vec<MemBlock>,
 }
 
 impl SubAllocator {
