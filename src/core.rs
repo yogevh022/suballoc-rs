@@ -53,6 +53,14 @@ impl SubAllocator {
         }
     }
 
+    fn coalesce_prev_free(&mut self, prev_index: usize, next_index: usize, mut block: MemBlock) {
+        block.size += block.prev_space;
+        block.prev_space = 0;
+        self.used_blocks[next_index].prev_space = block.size;
+        self.free_blocks[prev_index] = block;
+        self.free_blocks_indices.push(prev_index);
+    }
+
     /// allocate the requested size, return allocation start index, error if out of memory
     pub fn allocate(&mut self, requested_size: usize) -> Result<usize, SubAllocatorError> {
         debug_assert!(requested_size > 0);
@@ -87,15 +95,42 @@ impl SubAllocator {
         Err(SubAllocatorError::OutOfMemory)
     }
 
-    /// deallocate by allocation start index, error if index is out of bounds
+    /// deallocate by allocation start index
     pub fn deallocate(&mut self, alloc_start: usize) -> Result<(), SubAllocatorError> {
         if alloc_start >= self.capacity {
             return Err(SubAllocatorError::InvalidAllocation);
         }
-        Ok(self.deallocate_unchecked(alloc_start))
+        let mut block = self.used_blocks[alloc_start];
+        let next_block_idx = alloc_start + block.size;
+        debug_assert!(alloc_start >= block.prev_space);
+        let greedy_idx = alloc_start - block.prev_space;
+
+        if next_block_idx == self.capacity {
+            block.size += block.prev_space;
+            block.prev_space = 0;
+            self.free_blocks[greedy_idx] = block;
+            self.free_blocks_indices.push(greedy_idx);
+            return Ok(());
+        }
+
+        let mut next_block = self.free_blocks[next_block_idx];
+        if next_block.prev_space == 0 {
+            // coalesce with prev free and next free blocks
+            next_block.size += block.size + block.prev_space;
+            self.free_blocks[greedy_idx] = next_block;
+            let free_block_index = self
+                .free_blocks_indices
+                .iter_mut()
+                .find(|i| **i == next_block_idx);
+            *free_block_index.ok_or(SubAllocatorError::InvalidAllocation)? = greedy_idx;
+        } else {
+            // coalesce with prev free block and update the next used block prev_space
+            self.coalesce_prev_free(greedy_idx, next_block_idx, next_block);
+        }
+        Ok(())
     }
 
-    /// deallocate(…), but without checking if alloc_start is within bounds, panics if index is out of bounds
+    /// deallocate(…), but without checking if alloc_start is valid or within bounds, panics
     pub fn deallocate_unchecked(&mut self, alloc_start: usize) {
         let mut block = self.used_blocks[alloc_start];
         let next_block_idx = alloc_start + block.size;
@@ -119,14 +154,11 @@ impl SubAllocator {
                 .free_blocks_indices
                 .iter_mut()
                 .find(|i| **i == next_block_idx);
+            // unchecked unwraps here !!
             *free_block_index.unwrap() = greedy_idx;
         } else {
             // coalesce with prev free block and update the next used block prev_space
-            block.size += block.prev_space;
-            block.prev_space = 0;
-            self.used_blocks[next_block_idx].prev_space = block.size;
-            self.free_blocks[greedy_idx] = block;
-            self.free_blocks_indices.push(greedy_idx);
+            self.coalesce_prev_free(greedy_idx, next_block_idx, next_block);
         }
     }
 
