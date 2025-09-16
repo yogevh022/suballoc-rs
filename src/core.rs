@@ -53,6 +53,15 @@ impl SubAllocator {
         }
     }
 
+    fn remove_free_block_index(&mut self, index: usize) {
+        let idx_i = self
+            .free_blocks_indices
+            .iter()
+            .position(|&i| i == index)
+            .unwrap();
+        self.free_blocks_indices.swap_remove(idx_i);
+    }
+
     /// allocate the requested size, return allocation start index, error if out of memory
     pub fn allocate(&mut self, requested_size: usize) -> Result<usize, SubAllocatorError> {
         debug_assert!(requested_size > 0);
@@ -110,17 +119,15 @@ impl SubAllocator {
             // coalesce with prev free and next free blocks
             next_block.size += block.size + block.prev_space;
             self.free_blocks[greedy_idx] = Some(next_block);
-            let free_block_index = self
-                .free_blocks_indices
-                .iter_mut()
-                .find(|i| **i == next_block_idx);
-            *free_block_index.unwrap() = greedy_idx;
+            self.remove_free_block_index(next_block_idx);
         } else {
             // coalesce with prev free block and update the next used block prev_space
             block.size += block.prev_space;
             block.prev_space = 0;
             self.used_blocks[next_block_idx].prev_space = block.size;
             self.free_blocks[greedy_idx] = Some(block);
+        }
+        if block.prev_space == 0 {
             self.free_blocks_indices.push(greedy_idx);
         }
         Ok(())
