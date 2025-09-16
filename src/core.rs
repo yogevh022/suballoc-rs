@@ -121,6 +121,7 @@ impl SubAllocator {
         if let Some(mut next_block) = self.free_blocks[next_block_idx] {
             // coalesce with prev free and next free blocks
             next_block.size += block.size + block.prev_space;
+            next_block.prev_space = 0;
             self.free_blocks[greedy_idx] = Some(next_block);
             self.free_blocks[next_block_idx] = None;
             self.remove_free_block_index(next_block_idx);
