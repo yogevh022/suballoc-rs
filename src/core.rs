@@ -4,7 +4,7 @@ pub enum SubAllocatorError {
     InvalidAllocation,
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct MemBlock {
     size: usize,
     prev_space: usize,
@@ -15,6 +15,13 @@ impl MemBlock {
         MemBlock {
             size,
             prev_space: 0,
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            size: 0,
+            prev_space: 1,
         }
     }
 }
@@ -29,7 +36,7 @@ pub struct SubAllocator {
 
 impl SubAllocator {
     pub fn new(capacity: usize) -> Self {
-        let mut free_blocks = vec![MemBlock::default(); capacity];
+        let mut free_blocks = vec![MemBlock::empty(); capacity];
         free_blocks[0] = MemBlock::new(capacity);
         let mut free_blocks_indices = Vec::with_capacity(capacity);
         free_blocks_indices.push(0);
@@ -37,7 +44,7 @@ impl SubAllocator {
             capacity,
             free_blocks_indices,
             free_blocks,
-            used_blocks: vec![MemBlock::default(); capacity],
+            used_blocks: vec![MemBlock::empty(); capacity],
         }
     }
 
