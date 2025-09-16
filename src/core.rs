@@ -1,41 +1,43 @@
-#[derive(Debug)]
-pub enum MallocError {
+#[derive(Debug, Clone, Copy)]
+pub enum SubAllocatorError {
     OutOfMemory,
     InvalidAllocation,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct MemBlock {
+#[derive(Debug, Default, Clone, Copy)]
+struct MemBlock {
     size: usize,
     prev_space: usize,
 }
 
 impl MemBlock {
-    pub fn new(size: usize, prev_space: usize) -> Self {
-        MemBlock { size, prev_space }
+    pub fn new(size: usize) -> Self {
+        MemBlock {
+            size,
+            prev_space: 0,
+        }
     }
 }
 
-#[derive(Debug)]
-pub struct Malloc {
+#[derive(Debug, Clone)]
+pub struct SubAllocator {
     capacity: usize,
-
     free_blocks_indices: Vec<usize>,
     free_blocks: Vec<MemBlock>,
     used_blocks: Vec<MemBlock>,
 }
 
-impl Malloc {
+impl SubAllocator {
     pub fn new(capacity: usize) -> Self {
-        let mut free_blocks = vec![MemBlock::new(0, 0); capacity];
-        free_blocks[0] = MemBlock::new(capacity, 0);
+        let mut free_blocks = vec![MemBlock::default(); capacity];
+        free_blocks[0] = MemBlock::new(capacity);
         let mut free_blocks_indices = Vec::with_capacity(capacity);
         free_blocks_indices.push(0);
-        Malloc {
+        SubAllocator {
             capacity,
             free_blocks_indices,
             free_blocks,
-            used_blocks: vec![MemBlock::new(0, 0); capacity],
+            used_blocks: vec![MemBlock::default(); capacity],
         }
     }
 
@@ -44,14 +46,16 @@ impl Malloc {
         let leftover_size = block.size - target_size;
         if leftover_size > 0 {
             block.size = target_size;
-            let leftover_block = MemBlock::new(leftover_size, 0);
+            let leftover_block = MemBlock::new(leftover_size);
             Some(leftover_block)
         } else {
             None
         }
     }
 
-    pub fn alloc(&mut self, requested_size: usize) -> Result<(usize, MemBlock), MallocError> {
+    /// allocate the requested size, return allocation start index, error if out of memory
+    pub fn allocate(&mut self, requested_size: usize) -> Result<usize, SubAllocatorError> {
+        debug_assert!(requested_size > 0);
         for (idx_i, &idx) in self.free_blocks_indices.iter().enumerate() {
             let mut block = self.free_blocks[idx];
             if block.size < requested_size {
@@ -78,23 +82,32 @@ impl Malloc {
             }
 
             self.used_blocks[idx] = block;
-            return Ok((idx, block));
+            return Ok(idx);
         }
-        Err(MallocError::OutOfMemory)
+        Err(SubAllocatorError::OutOfMemory)
     }
 
-    pub fn free(&mut self, addr: usize) -> Result<(), MallocError> {
-        let mut block = self.used_blocks[addr];
+    /// deallocate by allocation start index, error if index is out of bounds
+    pub fn deallocate(&mut self, alloc_start: usize) -> Result<(), SubAllocatorError> {
+        if alloc_start >= self.capacity {
+            return Err(SubAllocatorError::InvalidAllocation);
+        }
+        Ok(self.deallocate_unchecked(alloc_start))
+    }
 
-        let next_block_idx = addr + block.size;
-        let greedy_idx = addr - block.prev_space;
+    /// deallocate(…), but without checking if alloc_start is within bounds, panics if index is out of bounds
+    pub fn deallocate_unchecked(&mut self, alloc_start: usize) {
+        let mut block = self.used_blocks[alloc_start];
+        let next_block_idx = alloc_start + block.size;
+        debug_assert!(alloc_start >= block.prev_space);
+        let greedy_idx = alloc_start - block.prev_space;
 
         if next_block_idx == self.capacity {
             block.size += block.prev_space;
             block.prev_space = 0;
             self.free_blocks[greedy_idx] = block;
             self.free_blocks_indices.push(greedy_idx);
-            return Ok(());
+            return;
         }
 
         let mut next_block = self.free_blocks[next_block_idx];
@@ -115,6 +128,28 @@ impl Malloc {
             self.free_blocks[greedy_idx] = block;
             self.free_blocks_indices.push(greedy_idx);
         }
-        Ok(())
+    }
+
+    /// total capacity of the arena
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// total free space
+    pub fn free(&self) -> usize {
+        self.free_blocks_indices
+            .iter()
+            .map(|&i| self.free_blocks[i].size)
+            .sum()
+    }
+
+    /// total used space
+    pub fn used(&self) -> usize {
+        self.capacity - self.free()
+    }
+
+    /// number of fragments free space is split into
+    pub fn fragment_count(&self) -> usize {
+        self.free_blocks_indices.len()
     }
 }
