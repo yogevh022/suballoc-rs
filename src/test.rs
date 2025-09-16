@@ -41,6 +41,12 @@ pub(crate) fn test_suballoc() {
     let free_time = hotloop!(LOOPS; i; {
         suballoc.deallocate(allocs.pop().unwrap()).unwrap();
     });
+    let alloc_time = hotloop!(LOOPS; i; {
+        allocs.push(suballoc.allocate(1).unwrap());
+    });
+    let free_time = hotloop!(LOOPS; i; {
+        suballoc.deallocate(allocs.pop().unwrap()).unwrap();
+    });
 
     println!("alloc: {:?} free: {:?}", alloc_time, free_time);
 }

@@ -75,7 +75,7 @@ impl SubAllocator {
             // update the next used block prev_space
             let next_idx = idx + block.size;
             if next_idx != self.capacity {
-                self.used_blocks[next_idx].prev_space = block.size;
+                self.used_blocks[next_idx].prev_space = block.size - requested_size;
             }
 
             // add leftover space back
