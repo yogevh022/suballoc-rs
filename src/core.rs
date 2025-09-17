@@ -105,6 +105,10 @@ impl SubAllocator {
             if let Some(next_block) = self.free_blocks[next_idx].take() {
                 // coalesce with prev free and next free blocks
                 block.size += next_block.size;
+                let next_next_idx = next_idx + next_block.size;
+                if next_next_idx != self.capacity {
+                    self.used_blocks[next_next_idx].prev_space = block.size; // update block next to next_block
+                }
                 let idx_i = self.free_blocks_indices.iter().position(|&i| i == next_idx);
                 self.free_blocks_indices.swap_remove(idx_i.unwrap());
             } else {
