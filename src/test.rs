@@ -24,7 +24,7 @@ pub(crate) fn test_suballoc_de() {
             suballoc.allocate(i*100).unwrap();
         }
     }
-    suballoc.deallocate(allocs.pop().unwrap()).unwrap();
+    suballoc.deallocate(allocs.pop().unwrap());
     println!("free: {} used: {} frag: {}", suballoc.free(), suballoc.used(), suballoc.fragment_count());
 }
 
@@ -39,13 +39,7 @@ pub(crate) fn test_suballoc() {
         allocs.push(suballoc.allocate(1).unwrap());
     });
     let free_time = hotloop!(LOOPS; i; {
-        suballoc.deallocate(allocs.pop().unwrap()).unwrap();
-    });
-    let alloc_time = hotloop!(LOOPS; i; {
-        allocs.push(suballoc.allocate(1).unwrap());
-    });
-    let free_time = hotloop!(LOOPS; i; {
-        suballoc.deallocate(allocs.pop().unwrap()).unwrap();
+        suballoc.deallocate(allocs.pop().unwrap());
     });
 
     println!("alloc: {:?} free: {:?}", alloc_time, free_time);

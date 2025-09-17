@@ -53,15 +53,6 @@ impl SubAllocator {
         }
     }
 
-    fn remove_free_block_index(&mut self, index: usize) {
-        let idx_i = self
-            .free_blocks_indices
-            .iter()
-            .position(|&i| i == index)
-            .unwrap();
-        self.free_blocks_indices.swap_remove(idx_i);
-    }
-
     /// allocate the requested size, return allocation start index, error if out of memory
     pub fn allocate(&mut self, requested_size: usize) -> Result<usize, SubAllocatorError> {
         debug_assert!(requested_size > 0);
@@ -98,45 +89,31 @@ impl SubAllocator {
     }
 
     /// deallocate by allocation start index
-    pub fn deallocate(&mut self, alloc_start: usize) -> Result<(), SubAllocatorError> {
-        if alloc_start >= self.capacity {
-            return Err(SubAllocatorError::InvalidAllocation);
-        }
+    pub fn deallocate(&mut self, alloc_start: usize) {
+        debug_assert!(alloc_start < self.capacity);
         let mut block = self.used_blocks[alloc_start];
-        let next_block_idx = alloc_start + block.size;
-        debug_assert!(alloc_start >= block.prev_space);
-        let greedy_idx = alloc_start - block.prev_space;
+        block.size += block.prev_space;
 
-        if block.prev_space == 0 {
-            println!("prev_space == 0: gi: {}", greedy_idx);
-            self.free_blocks_indices.push(greedy_idx);
+        let next_idx = alloc_start + block.size;
+        let mut greedy_idx = alloc_start - block.prev_space;
+        if self.free_blocks[greedy_idx].is_none() {
+            self.free_blocks_indices.push(alloc_start);
+            greedy_idx = alloc_start;
         }
 
-        if next_block_idx == self.capacity {
-            block.size += block.prev_space;
-            block.prev_space = 0;
-            println!("next_block_idx == capacity: gi: {}", greedy_idx);
-            self.free_blocks[greedy_idx] = Some(block);
-            return Ok(());
+        if next_idx != self.capacity {
+            if let Some(next_block) = self.free_blocks[next_idx].take() {
+                // coalesce with prev free and next free blocks
+                block.size += next_block.size;
+                let idx_i = self.free_blocks_indices.iter().position(|&i| i == next_idx);
+                self.free_blocks_indices.swap_remove(idx_i.unwrap());
+            } else {
+                // coalesce with prev free block and update the next used block prev_space
+                self.used_blocks[next_idx].prev_space = block.size;
+            };
         }
 
-        if let Some(mut next_block) = self.free_blocks[next_block_idx] {
-            // coalesce with prev free and next free blocks
-            next_block.size += block.size + block.prev_space;
-            next_block.prev_space = 0;
-            println!("coalesce pn: gi: {}, nexti: {}", greedy_idx, next_block_idx);
-            self.free_blocks[greedy_idx] = Some(next_block);
-            self.free_blocks[next_block_idx] = None;
-            self.remove_free_block_index(next_block_idx);
-        } else {
-            // coalesce with prev free block and update the next used block prev_space
-            block.size += block.prev_space;
-            block.prev_space = 0;
-            println!("coalesce p: gi: {}, nexti: {}", greedy_idx, next_block_idx);
-            self.used_blocks[next_block_idx].prev_space = block.size;
-            self.free_blocks[greedy_idx] = Some(block);
-        }
-        Ok(())
+        self.free_blocks[greedy_idx] = Some(block);
     }
 
     /// total capacity of the arena
