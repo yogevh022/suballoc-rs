@@ -132,7 +132,7 @@ impl SubAllocator {
     pub fn free(&self) -> usize {
         self.free_blocks_indices
             .iter()
-            .map(|&i| self.free_blocks[i].unwrap().size)
+            .map(|&i| self.free_blocks[i].ok_or_else(|| panic!("ERR: free_blocks {} doesnt exist", i)).unwrap().size)
             .sum()
     }
 
