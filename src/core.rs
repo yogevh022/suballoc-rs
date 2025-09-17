@@ -113,6 +113,7 @@ impl SubAllocator {
             };
         }
 
+        block.prev_space = 0;
         self.free_blocks[greedy_idx] = Some(block);
     }
 
