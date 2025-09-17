@@ -95,10 +95,10 @@ impl SubAllocator {
         block.size += block.prev_space;
 
         let next_idx = alloc_start + block.size;
-        let mut greedy_idx = alloc_start - block.prev_space;
-        if self.free_blocks[greedy_idx].is_none() {
+        let greedy_idx = alloc_start - block.prev_space;
+        if greedy_idx == alloc_start {
+            println!("no prev_space: {}", alloc_start);
             self.free_blocks_indices.push(alloc_start);
-            greedy_idx = alloc_start;
         }
 
         if next_idx != self.capacity {
@@ -109,11 +109,13 @@ impl SubAllocator {
                 if next_next_idx != self.capacity {
                     self.used_blocks[next_next_idx].prev_space = block.size; // update block next to next_block
                 }
+                println!("coalescing p+n: {} .. {}, updated nn: {}", greedy_idx, next_idx, next_next_idx);
                 let idx_i = self.free_blocks_indices.iter().position(|&i| i == next_idx);
                 self.free_blocks_indices.swap_remove(idx_i.unwrap());
             } else {
                 // coalesce with prev free block and update the next used block prev_space
                 self.used_blocks[next_idx].prev_space = block.size;
+                println!("coalescing p: g: {} .. s: {}, updated n: {}", greedy_idx, alloc_start, next_idx);
             };
         }
 
