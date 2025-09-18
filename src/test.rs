@@ -1,5 +1,6 @@
-use std::hint::black_box;
 use crate::core::SubAllocator;
+use rand::Rng;
+use std::hint::black_box;
 
 #[macro_export]
 macro_rules! hotloop {
@@ -13,19 +14,51 @@ macro_rules! hotloop {
 }
 
 pub(crate) fn test_suballoc_de() {
-    const CAPACITY: usize = 1_500_000;
-    const LOOPS: usize = 10_000;
+    const CAPACITY: usize = 30_000_000;
+    const LOOPS: usize = 1_000_000;
     let mut suballoc = SubAllocator::new(CAPACITY);
     let mut allocs = Vec::default();
-    for i in 0..10 {
-        if i == 0 {
-            allocs.push(suballoc.allocate(i*100).unwrap());
-        } else {
-            suballoc.allocate(i*100).unwrap();
+    let mut rng = rand::rng();
+
+    let time = hotloop!(LOOPS; i; {
+        let p: f32 = rng.random();
+        if p > 0.45 {
+            let size = rng.random_range(1..2) as usize;
+            let alloc = suballoc.allocate(size).unwrap();
+            // println!("allocated: {}", alloc);
+            allocs.push(alloc);
+        } else if !allocs.is_empty() {
+            // println!("ind: {:?}", &suballoc.free_blocks_indices);
+            // println!(
+            //     "frb: {:?}",
+            //     &suballoc
+            //         .free_blocks
+            //         .iter()
+            //         .enumerate()
+            //         .filter_map(|(i, b)| b.map(|b| (i, b)))
+            //         .collect::<Vec<_>>()
+            // );
+            let alloc = allocs.swap_remove(rng.random_range(0..allocs.len()));
+            suballoc.deallocate(alloc);
         }
-    }
-    suballoc.deallocate(allocs.pop().unwrap());
-    println!("free: {} used: {} frag: {}", suballoc.free(), suballoc.used(), suballoc.fragment_count());
+    });
+    println!("time: {:?}", time);
+    println!(
+        "free: {} used: {} frag: {}",
+        suballoc.free(),
+        suballoc.used(),
+        suballoc.fragment_count()
+    );
+    // println!("ind: {:?}", &suballoc.free_blocks_indices);
+    // println!(
+    //     "frb: {:?}",
+    //     &suballoc
+    //         .free_blocks
+    //         .iter()
+    //         .enumerate()
+    //         .filter_map(|(i, b)| b.map(|b| (i, b)))
+    //         .collect::<Vec<_>>()
+    // );
 }
 
 pub(crate) fn test_suballoc() {

@@ -1,13 +1,21 @@
+use std::fmt::Debug;
+
 #[derive(Debug, Clone, Copy)]
 pub enum SubAllocatorError {
     OutOfMemory,
     InvalidAllocation,
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Default, Clone, Copy)]
 pub struct MemBlock {
     size: usize,
     prev_space: usize,
+}
+
+impl Debug for MemBlock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Blk[{}| {}]", self.prev_space, self.size)
+    }
 }
 
 impl MemBlock {
@@ -92,15 +100,14 @@ impl SubAllocator {
     pub fn deallocate(&mut self, alloc_start: usize) {
         debug_assert!(alloc_start < self.capacity);
         let mut block = self.used_blocks[alloc_start];
-        block.size += block.prev_space;
 
         let next_idx = alloc_start + block.size;
         let greedy_idx = alloc_start - block.prev_space;
         if greedy_idx == alloc_start {
-            println!("no prev_space: {}", alloc_start);
             self.free_blocks_indices.push(alloc_start);
         }
 
+        block.size += block.prev_space;
         if next_idx != self.capacity {
             if let Some(next_block) = self.free_blocks[next_idx].take() {
                 // coalesce with prev free and next free blocks
@@ -109,13 +116,11 @@ impl SubAllocator {
                 if next_next_idx != self.capacity {
                     self.used_blocks[next_next_idx].prev_space = block.size; // update block next to next_block
                 }
-                println!("coalescing p+n: {} .. {}, updated nn: {}", greedy_idx, next_idx, next_next_idx);
                 let idx_i = self.free_blocks_indices.iter().position(|&i| i == next_idx);
                 self.free_blocks_indices.swap_remove(idx_i.unwrap());
             } else {
                 // coalesce with prev free block and update the next used block prev_space
                 self.used_blocks[next_idx].prev_space = block.size;
-                println!("coalescing p: g: {} .. s: {}, updated n: {}", greedy_idx, alloc_start, next_idx);
             };
         }
 

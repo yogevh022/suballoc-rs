@@ -3,6 +3,9 @@ name = "suballoc"
 version = "0.1.4"
 edition = "2024"
 
+[dependencies]
+rand = "0.10.0-rc.0"
+
 [profile.dev]
 strip = false
 debug = true

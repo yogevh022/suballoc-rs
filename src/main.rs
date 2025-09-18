@@ -5,6 +5,6 @@ mod test;
 
 
 fn main() {
-    // test_suballoc_de();
-    test_suballoc();
+    test_suballoc_de();
+    // test_suballoc();
 }
