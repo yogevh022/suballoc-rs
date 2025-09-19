@@ -1,6 +1,7 @@
 use crate::core::SubAllocator;
 use rand::Rng;
 use std::hint::black_box;
+use crate::tlsf;
 
 #[macro_export]
 macro_rules! hotloop {
@@ -55,4 +56,11 @@ pub(crate) fn test_suballoc() {
     });
 
     println!("alloc: {:?} free: {:?}", alloc_time, free_time);
+}
+
+pub(crate) fn test_tlsf() {
+    const CAPACITY: usize = 10_000;;
+    let sa = tlsf::TLSF::new(CAPACITY as u32);
+    let m = sa.mapping(1);
+    dbg!(m);
 }
