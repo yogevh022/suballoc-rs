@@ -59,7 +59,7 @@ pub(crate) fn test_suballoc() {
 }
 
 pub(crate) fn test_tlsf() {
-    const CAPACITY: usize = 10_000;;
+    const CAPACITY: usize = 100;
     let sa = tlsf::TLSF::new(CAPACITY as u32);
     let m = sa.mapping(1);
     dbg!(m);
