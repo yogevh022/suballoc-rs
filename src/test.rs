@@ -62,23 +62,24 @@ pub(crate) fn test_suballoc() {
 
 pub(crate) fn test_tlsf() {
     const CAPACITY: usize = 2usize.pow(24); // 16m~
-    const LOOPS: usize = 500_000;
+    const LOOPS: usize = 2_000_000;
     let mut sa = tlsf::TLSF::new(CAPACITY as Word);
     dbg!(sa.capacity);
 
     let mut allocs = Vec::with_capacity(LOOPS);
     let mut rng = rand::rng();
 
-    let mut alloc_time = Duration::new(0, 0);
-    let mut free_time = Duration::new(0, 0);
-    for j in 0..20 {
-        alloc_time += hotloop!(LOOPS; i; {
-            allocs.push(sa.allocate(1).unwrap());
-        });
-        free_time += hotloop!(LOOPS; i; {
-            sa.deallocate(allocs.pop().unwrap()).unwrap();
-        });
-    }
+    let time = hotloop!(LOOPS; i; {
+        let p: f32 = rng.random();
+        if p > 0.49 {
+            let size = rng.random_range(1..=400) as u32;
+            let alloc = sa.allocate(size).unwrap();
+            allocs.push(alloc);
+        } else if !allocs.is_empty() {
+            let alloc = allocs.swap_remove(rng.random_range(0..allocs.len()));
+            sa.deallocate(alloc).unwrap();
+        }
+    });
 
-    println!("alloc: {:?} free: {:?}", alloc_time, free_time);
+    println!("time: {:?}", time);
 }

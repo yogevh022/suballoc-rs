@@ -289,6 +289,7 @@ impl TLSF {
     pub fn allocate(&mut self, size: Word) -> AllocResult<Word> {
         let aligned_size = align_up(size, ALIGNMENT);
         let (fli, sli) = self.mapping_search(aligned_size)?;
+        println!("allocate: fli: {}, sli: {}", fli, sli);
         let block_head = self.popf_free_link(fli, sli);
         let block_ptr = block_head.as_ptr() as *mut BlockHead;
         self.use_block(block_ptr, aligned_size);
