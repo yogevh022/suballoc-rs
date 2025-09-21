@@ -51,11 +51,17 @@ impl TLSF {
         let mem_ptr = mem.as_mut_ptr();
         let user_size = Self::strip_block_size_meta(capacity);
         unsafe {
-            (*(mem_ptr as *mut BlockHead)).set_size(user_size);
+            let initial_head = &mut *(mem_ptr as *mut BlockHead);
+            initial_head.set_size(user_size);
+            initial_head.set_used();
+            initial_head.set_prev_used();
         }
         let mem_tail = mem_ptr.wrapping_add(capacity as usize - size_of::<BlockTail>());
         unsafe {
-            (*(mem_tail as *mut BlockTail)).set_size(user_size);
+            let initial_tail = &mut *(mem_tail as *mut BlockTail);
+            initial_tail.set_size(user_size);
+            initial_tail.set_used();
+            initial_tail.set_prev_used();
         }
         mem
     }
@@ -76,8 +82,7 @@ impl TLSF {
         Word::MAX << index
     }
 
-
-    fn set_bitmap_index_used(&mut self, fli: Word, sli: Word) {
+    fn set_bitmap_index_available(&mut self, fli: Word, sli: Word) {
         let fl_mask = 1 << fli;
         self.fl_bitmap |= fl_mask;
 
@@ -86,7 +91,7 @@ impl TLSF {
         self.sl_bitmaps[fli as usize] |= sl_mask;
     }
 
-    fn set_bitmap_index_free(&mut self, fli: Word, sli: Word) {
+    fn set_bitmap_index_empty(&mut self, fli: Word, sli: Word) {
         let sl_idx = sli as usize;
         let sl_mask = 1 << sl_idx;
         self.sl_bitmaps[fli as usize] &= !sl_mask;
@@ -114,10 +119,11 @@ impl TLSF {
         *slot = Some(free_link_ptr);
 
         unsafe {
-            (*block_head.as_ptr()).set_link(Some(free_link_ptr));
+            let link_option_ptr = NonNull::new_unchecked(slot);
+            (*block_head.as_ptr()).set_link(link_option_ptr);
         }
 
-        self.set_bitmap_index_used(fli, sli);
+        self.set_bitmap_index_available(fli, sli);
     }
 
     fn popf_free_link(&mut self, fli: Word, sli: Word) -> NonNull<FreeBlockHead> {
@@ -129,12 +135,38 @@ impl TLSF {
         *slot = next;
 
         if slot.is_none() {
-            self.set_bitmap_index_free(fli, sli);
+            self.set_bitmap_index_empty(fli, sli);
         }
         unsafe {
             let _ = Box::from_raw(link.as_ptr()); // mark for dropping
         }
         head
+    }
+
+    fn remove_free_link(
+        &mut self,
+        link: NonNull<Option<NonNull<FreeBlockLink>>>,
+    ) -> NonNull<FreeBlockHead> {
+        let link_ptr = unsafe { &mut *link.as_ptr() };
+        let link_ptr = link_ptr.take().unwrap();
+
+        let link = unsafe { &mut (*link_ptr.as_ptr()) };
+        if let Some(next) = link.next {
+            unsafe {
+                (*next.as_ptr()).prev = link.prev;
+            }
+        };
+        if let Some(prev) = link.prev {
+            unsafe {
+                (*prev.as_ptr()).next = link.next;
+            }
+        };
+
+        unsafe {
+            let _ = Box::from_raw(link_ptr.as_ptr()); // mark for dropping
+        }
+
+        link.head
     }
 
     fn mapping_search(&self, size: Word) -> AllocResult<(Word, Word)> {
@@ -193,6 +225,7 @@ impl TLSF {
             leftover_tail.set_prev_used();
         }
 
+        // head_from_tail using updated values from leftover tail ^
         let leftover_head_ptr = Self::head_from_tail(leftover_tail_ptr) as *mut FreeBlockHead;
         unsafe {
             let leftover_head = &mut (*leftover_head_ptr);
@@ -210,6 +243,8 @@ impl TLSF {
                 (*next_head).set_prev_used();
             }
             (*block_ptr).set_used();
+            let tail = Self::tail_from_head(block_ptr);
+            (*tail).set_used();
         }
     }
 
@@ -258,6 +293,89 @@ impl TLSF {
         let block_ptr = block_head.as_ptr() as *mut BlockHead;
         self.use_block(block_ptr, aligned_size);
         Ok(self.block_ptr_to_offset(block_ptr as *const u8))
+    }
+
+    pub fn deallocate(&mut self, addr: Word) -> AllocResult<()> {
+        let block_ptr = self.offset_to_block_ptr(addr);
+        let free_head_ptr: *mut BlockHead;
+        let free_tail_ptr: *mut BlockTail;
+
+        // dbg!(addr);
+
+        let mut ta: Option<(Word, Word)> = None;
+        let mut tb: Option<(Word, Word)> = None;
+
+        if !self.block_is_last(block_ptr) {
+            unsafe {
+                let next_head_ptr = Self::next_block_head(block_ptr);
+                let next_head = &mut (*next_head_ptr);
+
+                if !next_head.used() {
+                    ta = Some(self.mapping_insert(next_head.size()));
+                    let next_free_link = (*(next_head_ptr as *mut FreeBlockHead)).link();
+                    self.remove_free_link(next_free_link);
+                    free_tail_ptr = Self::tail_from_head(next_head_ptr);
+                } else {
+                    next_head.set_prev_free();
+                    let next_tail = Self::tail_from_head(next_head_ptr);
+                    (*next_tail).set_prev_free();
+                    free_tail_ptr = Self::tail_from_head(block_ptr);
+                }
+            };
+        } else {
+            free_tail_ptr = Self::tail_from_head(block_ptr);
+        }
+
+        if !self.block_is_first(block_ptr) {
+            unsafe {
+                let prev_tail_ptr = Self::prev_block_tail(block_ptr);
+                let prev_tail = &mut (*prev_tail_ptr);
+
+                if !prev_tail.used() {
+                    tb = Some(self.mapping_insert(prev_tail.size()));
+                    let prev_free_head = Self::head_from_tail(prev_tail_ptr);
+                    let prev_free_link = (*(prev_free_head as *mut FreeBlockHead)).link();
+                    self.remove_free_link(prev_free_link);
+                    free_head_ptr = prev_free_head;
+                } else {
+                    free_head_ptr = block_ptr;
+                }
+            }
+        } else {
+            free_head_ptr = block_ptr;
+        }
+
+        let coalesced_size = unsafe {
+            (free_tail_ptr as *const u8).offset_from(free_head_ptr as *const u8) as Word
+                - size_of::<BlockHead>() as Word
+        };
+
+        unsafe {
+            (*free_head_ptr).set_size(coalesced_size);
+            (*free_head_ptr).set_free();
+            (*free_head_ptr).set_prev_used();
+            (*free_tail_ptr).set_size(coalesced_size);
+            (*free_tail_ptr).set_free();
+            (*free_tail_ptr).set_prev_used();
+        }
+
+        if let Some((fl, sl)) = ta {
+            if self.free_blocks[fl as usize][sl as usize].is_none() {
+                self.set_bitmap_index_empty(fl, sl);
+            }
+        }
+
+        if let Some((fl, sl)) = tb {
+            if self.free_blocks[fl as usize][sl as usize].is_none() {
+                self.set_bitmap_index_empty(fl, sl);
+            }
+        }
+
+        self.pushf_free_link(unsafe {
+            NonNull::new_unchecked(free_head_ptr as *mut FreeBlockHead)
+        });
+
+        Ok(())
     }
 }
 

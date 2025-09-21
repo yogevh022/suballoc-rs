@@ -1,6 +1,7 @@
 use crate::core::SubAllocator;
 use rand::Rng;
 use std::hint::black_box;
+use std::time::Duration;
 use crate::tlsf;
 use crate::tlsf::Word;
 
@@ -60,15 +61,24 @@ pub(crate) fn test_suballoc() {
 }
 
 pub(crate) fn test_tlsf() {
-    const CAPACITY: usize = 128;
+    const CAPACITY: usize = 2usize.pow(24); // 16m~
+    const LOOPS: usize = 500_000;
     let mut sa = tlsf::TLSF::new(CAPACITY as Word);
     dbg!(sa.capacity);
-    let a =sa.allocate(1).unwrap();
-    dbg!(a);
-    let a =sa.allocate(9).unwrap();
-    dbg!(a);
-    let a =sa.allocate(8).unwrap();
-    dbg!(a);
-    // let m = sa.mapping_search(1);
-    // dbg!(m);
+
+    let mut allocs = Vec::with_capacity(LOOPS);
+    let mut rng = rand::rng();
+
+    let mut alloc_time = Duration::new(0, 0);
+    let mut free_time = Duration::new(0, 0);
+    for j in 0..20 {
+        alloc_time += hotloop!(LOOPS; i; {
+            allocs.push(sa.allocate(1).unwrap());
+        });
+        free_time += hotloop!(LOOPS; i; {
+            sa.deallocate(allocs.pop().unwrap()).unwrap();
+        });
+    }
+
+    println!("alloc: {:?} free: {:?}", alloc_time, free_time);
 }
