@@ -2,6 +2,7 @@ use crate::core::SubAllocator;
 use rand::Rng;
 use std::hint::black_box;
 use crate::tlsf;
+use crate::tlsf::Word;
 
 #[macro_export]
 macro_rules! hotloop {
@@ -59,8 +60,15 @@ pub(crate) fn test_suballoc() {
 }
 
 pub(crate) fn test_tlsf() {
-    const CAPACITY: usize = 100;
-    let sa = tlsf::TLSF::new(CAPACITY as u32);
-    let m = sa.mapping(1);
-    dbg!(m);
+    const CAPACITY: usize = 128;
+    let mut sa = tlsf::TLSF::new(CAPACITY as Word);
+    dbg!(sa.capacity);
+    let a =sa.allocate(1).unwrap();
+    dbg!(a);
+    let a =sa.allocate(9).unwrap();
+    dbg!(a);
+    let a =sa.allocate(8).unwrap();
+    dbg!(a);
+    // let m = sa.mapping_search(1);
+    // dbg!(m);
 }
