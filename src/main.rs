@@ -4,6 +4,7 @@ mod nav;
 mod block;
 mod core;
 mod test;
+mod meta;
 
 
 fn main() {

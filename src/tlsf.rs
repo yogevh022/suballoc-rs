@@ -46,18 +46,6 @@ impl TLSF {
         tlsf_instance
     }
 
-    const fn strip_block_size_meta(size: Word) -> Word {
-        size - BLOCK_META_SIZE
-    }
-
-    pub(crate) const fn add_block_size_meta(size: Word) -> Word {
-        size + BLOCK_META_SIZE
-    }
-
-    fn block_ptr_to_offset(&self, block_ptr: *const u8) -> Word {
-        unsafe { block_ptr.offset_from(self.mem.as_ptr() as *const _) as Word }
-    }
-
     fn init_mem(capacity: Word) -> Box<[u8]> {
         let mut mem = vec![0u8; capacity as usize].into_boxed_slice();
         let mem_ptr = mem.as_mut_ptr();
@@ -78,15 +66,16 @@ impl TLSF {
         self.pushf_free_link(head_ptr);
     }
 
-    fn left_mask_from(index: Word) -> Word {
-        Word::MAX << index
-    }
-
-    fn calc_sl_index_for_fl(size: Word, fl: Word) -> Word {
+    pub(crate) fn calc_sl_index_for_fl(size: Word, fl: Word) -> Word {
         let base = 1 << fl;
         let offset = size - base;
         (offset << SLI_BITS) >> fl
     }
+
+    fn left_mask_from(index: Word) -> Word {
+        Word::MAX << index
+    }
+
 
     fn set_bitmap_index_used(&mut self, fli: Word, sli: Word) {
         let fl_mask = 1 << fli;
@@ -148,12 +137,6 @@ impl TLSF {
         head
     }
 
-    fn mapping_insert(&mut self, size: Word) -> (Word, Word) {
-        let fl_idx = (WORD_BITS - 1) - size.leading_zeros() as Word;
-        let sl_idx = Self::calc_sl_index_for_fl(size, fl_idx);
-        (fl_idx, sl_idx)
-    }
-
     fn mapping_search(&self, size: Word) -> AllocResult<(Word, Word)> {
         let fl_idx = (WORD_BITS - 1) - size.leading_zeros() as Word;
         let available_fl_mask = self.fl_bitmap & Self::left_mask_from(fl_idx);
@@ -161,29 +144,38 @@ impl TLSF {
             return Err(AllocError::OutOfMemory);
         }
 
-        // todo refactor here
+        #[inline]
+        fn find_sl_for_fl(this: &TLSF, fl_idx: Word, size: Word) -> Option<Word> {
+            let sl_idx = TLSF::calc_sl_index_for_fl(size, fl_idx);
+            let sl_mask = this.sl_bitmaps[fl_idx as usize] & TLSF::left_mask_from(sl_idx);
+            if sl_mask != 0 {
+                return Some(sl_idx);
+            }
+            None
+        }
 
         let first_fl = available_fl_mask.trailing_zeros() as Word;
-        let sl_idx = if first_fl == fl_idx {
-            Self::calc_sl_index_for_fl(size, first_fl)
-        } else {
-            0
-        };
 
-        let available_sl_mask = self.sl_bitmaps[first_fl as usize] & Self::left_mask_from(sl_idx);
-        if available_sl_mask != 0 {
-            let first_sl = available_sl_mask.trailing_zeros() as Word;
-            return Ok((first_fl, first_sl));
+        if first_fl == fl_idx {
+            if let Some(sl_idx) = find_sl_for_fl(self, first_fl, size) {
+                return Ok((first_fl, sl_idx));
+            }
         }
 
         let higher_fl_mask = self.fl_bitmap & Self::left_mask_from(fl_idx + 1);
         if higher_fl_mask != 0 {
-            let next_fl = higher_fl_mask.trailing_zeros() as Word;
-            let first_sl = self.sl_bitmaps[sl_idx as usize].trailing_zeros() as Word;
-            return Ok((next_fl, first_sl));
+            let next_fl = higher_fl_mask.trailing_zeros();
+            let first_sl = self.sl_bitmaps[next_fl as usize].trailing_zeros() as Word;
+            return Ok((next_fl as Word, first_sl));
         }
 
         Err(AllocError::OutOfMemory)
+    }
+
+    fn mapping_insert(&mut self, size: Word) -> (Word, Word) {
+        let fl_idx = (WORD_BITS - 1) - size.leading_zeros() as Word;
+        let sl_idx = Self::calc_sl_index_for_fl(size, fl_idx);
+        (fl_idx, sl_idx)
     }
 
     fn part_leftover_block(
@@ -221,7 +213,12 @@ impl TLSF {
         }
     }
 
-    fn use_part_of_block(&mut self, block_ptr: *mut BlockHead, used_size: Word, leftover_total_size: Word) {
+    fn use_part_of_block(
+        &mut self,
+        block_ptr: *mut BlockHead,
+        used_size: Word,
+        leftover_total_size: Word,
+    ) {
         let leftover_head = self.part_leftover_block(block_ptr, leftover_total_size);
         self.pushf_free_link(unsafe { NonNull::new_unchecked(leftover_head) });
 
