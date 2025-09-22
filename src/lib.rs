@@ -1,8 +1,8 @@
-mod test;
-mod core;
-mod tlsf;
 mod block;
-mod nav;
+mod core;
 mod meta;
+mod nav;
+mod test;
+mod tlsf;
 
 pub use core::{SubAllocator, SubAllocatorError};

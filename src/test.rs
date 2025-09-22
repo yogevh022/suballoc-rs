@@ -1,9 +1,9 @@
 use crate::core::SubAllocator;
+use crate::tlsf;
+use crate::tlsf::Word;
 use rand::Rng;
 use std::hint::black_box;
 use std::time::Duration;
-use crate::tlsf;
-use crate::tlsf::Word;
 
 #[macro_export]
 macro_rules! hotloop {
@@ -30,8 +30,8 @@ pub(crate) fn test_suballoc_de() {
             let alloc = suballoc.allocate(size).unwrap();
             allocs.push(alloc);
         } else if !allocs.is_empty() {
-            let alloc = allocs.swap_remove(rng.random_range(0..allocs.len()));
-            suballoc.deallocate(alloc);
+            // let alloc = allocs.swap_remove(rng.random_range(0..allocs.len()));
+            // suballoc.deallocate(alloc);
         }
     });
     println!("time: {:?}", time);
@@ -69,17 +69,37 @@ pub(crate) fn test_tlsf() {
     let mut allocs = Vec::with_capacity(LOOPS);
     let mut rng = rand::rng();
 
-    let time = hotloop!(LOOPS; i; {
-        let p: f32 = rng.random();
-        if p > 0.49 {
-            let size = rng.random_range(1..=400) as u32;
-            let alloc = sa.allocate(size).unwrap();
-            allocs.push(alloc);
-        } else if !allocs.is_empty() {
-            let alloc = allocs.swap_remove(rng.random_range(0..allocs.len()));
-            sa.deallocate(alloc).unwrap();
-        }
-    });
+    for i in 0..3 {
+        let al = sa.allocate(1).unwrap();
+        allocs.push(al);
+    }
 
-    println!("time: {:?}", time);
+    for i in 0..allocs.len() {
+        sa.deallocate(allocs.swap_remove(rng.random_range(0..allocs.len())))
+            .unwrap();
+    }
+
+    // for i in 0..100900 {
+    //     let al = sa.allocate(1).unwrap();
+    //     allocs.push(al);
+    // }
+
+    // for i in 0..allocs.len() / 2 {
+    //     sa.deallocate(allocs.swap_remove(rng.random_range(0..allocs.len())))
+    //         .unwrap();
+    // }
+
+    // let time = hotloop!(LOOPS; i; {
+    //     let p: f32 = rng.random();
+    //     if p > 0.49 {
+    //         let size = rng.random_range(1..=1) as u32;
+    //         let alloc = sa.allocate(size).unwrap();
+    //         allocs.push(alloc);
+    //     } else if !allocs.is_empty() {
+    //         let alloc = allocs.swap_remove(rng.random_range(0..allocs.len()));
+    //         sa.deallocate(alloc).unwrap();
+    //     }
+    // });
+    //
+    // println!("time: {:?}", time);
 }
