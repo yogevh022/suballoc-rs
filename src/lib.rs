@@ -3,6 +3,6 @@ mod core;
 mod meta;
 mod nav;
 mod test;
-mod tlsf;
+pub mod tlsf;
 
 pub use core::{SubAllocator, SubAllocatorError};

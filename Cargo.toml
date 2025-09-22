@@ -5,6 +5,12 @@ edition = "2024"
 
 [dependencies]
 rand = "0.10.0-rc.0"
+bytemuck = "1.23.2"
+criterion = "0.7.0"
+
+[[bench]]
+name = "bench"
+harness = false
 
 [profile.dev]
 strip = false

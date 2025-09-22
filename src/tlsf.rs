@@ -1,6 +1,7 @@
 use crate::block::{BlockHead, BlockInterface, BlockTail, FreeBlockHead, FreeBlockInterface};
 use std::fmt::Debug;
 use std::ptr::NonNull;
+use crate::test::print_mem_casted;
 
 pub(crate) type AllocResult<T> = Result<T, AllocError>;
 pub(crate) type Word = u32;
@@ -10,9 +11,9 @@ pub(crate) const WORD_BITS: Word = Word::BITS as Word;
 pub(crate) const USED_BIT_MASK: Word = 0b1;
 pub(crate) const PREV_USED_BIT_MASK: Word = 0b10;
 pub(crate) const NEXT_USED_BIT_MASK: Word = 0b100;
-pub(crate) const SIZE_MASK: Word = !0b11;
+pub(crate) const SIZE_MASK: Word = !0b111;
 pub(crate) const SLI_BITS: Word = SLI_SIZE.trailing_zeros() as Word;
-pub(crate) const BLOCK_META_SIZE: Word = (size_of::<BlockHead>() + size_of::<BlockTail>()) as Word;
+pub(crate) const BLOCK_META_SIZE: Word = (size_of::<BlockHead>() + 8 + size_of::<BlockTail>()) as Word;
 
 #[derive(Debug, Clone, Copy)]
 pub enum AllocError {
@@ -223,15 +224,24 @@ impl TLSF {
         unsafe {
             if !self.block_is_last(block_ptr) {
                 let next_head = Self::next_block_head(block_ptr);
+                let next_tail = Self::tail_from_head(next_head);
                 (*next_head).set_prev_used();
+                (*next_tail).set_prev_used();
             }
             if !self.block_is_first(block_ptr) {
-                let prev_head = Self::head_from_tail(Self::prev_block_tail(block_ptr));
+                let prev_tail = Self::prev_block_tail(block_ptr);
+                let prev_head = Self::head_from_tail(prev_tail);
+
                 (*prev_head).set_next_used();
+                (*prev_tail).set_next_used();
             }
             (*block_ptr).set_used();
+            (*block_ptr).set_next_used();
+            (*block_ptr).set_prev_used();
             let tail = Self::tail_from_head(block_ptr);
             (*tail).set_used();
+            (*tail).set_next_used();
+            (*tail).set_prev_used();
         }
     }
 
@@ -245,7 +255,19 @@ impl TLSF {
         self.pushf_free_link(unsafe { NonNull::new_unchecked(leftover_head) });
 
         let used_tail_ptr =
-            unsafe { block_ptr.byte_add(size_of::<BlockHead>() + used_size as usize) };
+            unsafe { block_ptr.byte_add(size_of::<BlockHead>() + 8 + used_size as usize) };
+        
+        if !self.block_is_first(block_ptr) {
+            let prev_tail = unsafe {
+                Self::prev_block_tail(block_ptr)
+            };
+            let prev_head = Self::head_from_tail(prev_tail);
+
+            unsafe {
+                (*prev_head).set_next_used();
+                (*prev_tail).set_next_used();
+            }
+        }
 
         unsafe {
             let used_head = &mut (*block_ptr);
@@ -266,7 +288,8 @@ impl TLSF {
         let block_size = unsafe { (*block_ptr).size() };
 
         let leftover_total_size = block_size - used_size;
-        if leftover_total_size < align_up(BLOCK_META_SIZE + 1, ALIGNMENT) {
+
+        if leftover_total_size <= align_up(BLOCK_META_SIZE + 1, ALIGNMENT) {
             // if the leftover size is less= than block meta (min block size), include leftover.
             self.use_entire_block(block_ptr);
         } else {
@@ -282,60 +305,64 @@ impl TLSF {
         let block_head = self.popf_free_link(fli, sli);
         let block_ptr = block_head.as_ptr() as *mut BlockHead;
         self.use_block(block_ptr, aligned_size);
-        Ok(self.block_ptr_to_offset(block_ptr as *const u8))
+        Ok(self.offset_from_block_ptr(block_ptr as *const u8))
     }
 
     pub fn deallocate(&mut self, addr: Word) -> AllocResult<()> {
-        let block_ptr = self.offset_to_block_ptr(addr);
-        dbg!(block_ptr);
+        let block_ptr = self.block_ptr_from_offset(addr);
         let free_head_ptr: *mut BlockHead;
         let free_tail_ptr: *mut BlockTail;
 
-
-        let head = unsafe { &mut *(block_ptr as *mut BlockHead) };
-        dbg!(head.size());
+        let head = unsafe { &mut *(block_ptr) };
         let mut ta: Option<(Word, Word)> = None;
         let mut tb: Option<(Word, Word)> = None;
-        let next_head_ptr = unsafe { Self::next_block_head(block_ptr) };
-        let next_head = unsafe { &mut (*next_head_ptr) };
 
-        let prev_tail_ptr = unsafe { Self::prev_block_tail(block_ptr) };
-        let prev_tail = unsafe { &mut (*prev_tail_ptr) };
-        let prev_head = Self::head_from_tail(prev_tail_ptr);
-
-        if !head.next_used() {
-            unsafe {
-                ta = Some(self.mapping_insert(next_head.size()));
-                self.remove_free_link(&mut *(next_head_ptr as *mut FreeBlockHead));
-                free_tail_ptr = Self::tail_from_head(next_head_ptr);
-            };
-        } else {
-            next_head.set_prev_free();
-            let next_tail = Self::tail_from_head(next_head_ptr);
-            unsafe {
-                (*next_tail).set_prev_free();
+        if !self.block_is_last(block_ptr) {
+            let next_head_ptr = unsafe { Self::next_block_head(block_ptr) };
+            let next_head = unsafe { &mut (*next_head_ptr) };
+            if !head.next_used() {
+                unsafe {
+                    ta = Some(self.mapping_insert(next_head.size()));
+                    self.remove_free_link(&mut *(next_head_ptr as *mut FreeBlockHead));
+                    free_tail_ptr = Self::tail_from_head(next_head_ptr);
+                };
+            } else {
+                next_head.set_prev_free();
+                let next_tail = Self::tail_from_head(next_head_ptr);
+                unsafe {
+                    (*next_tail).set_prev_free();
+                }
+                free_tail_ptr = Self::tail_from_head(block_ptr);
             }
+        } else {
             free_tail_ptr = Self::tail_from_head(block_ptr);
         }
 
-        if !head.prev_used() {
-            unsafe {
-                tb = Some(self.mapping_insert(prev_tail.size()));
+        if !self.block_is_first(block_ptr) {
+            let prev_tail_ptr = unsafe { Self::prev_block_tail(block_ptr) };
+            let prev_tail = unsafe { &mut (*prev_tail_ptr) };
+            let prev_head = Self::head_from_tail(prev_tail_ptr);
+            if !head.prev_used() {
+                unsafe {
+                    tb = Some(self.mapping_insert(prev_tail.size()));
 
-                self.remove_free_link(&mut *(prev_head as *mut FreeBlockHead));
-                free_head_ptr = prev_head;
+                    self.remove_free_link(&mut *(prev_head as *mut FreeBlockHead));
+                    free_head_ptr = prev_head;
+                }
+            } else {
+                prev_tail.set_next_free();
+                unsafe {
+                    (*(prev_head as *mut FreeBlockHead)).set_next_free();
+                }
+                free_head_ptr = block_ptr;
             }
         } else {
-            prev_tail.set_next_free();
-            unsafe {
-                (*(prev_head as *mut FreeBlockHead)).set_next_free();
-            }
             free_head_ptr = block_ptr;
         }
 
         let coalesced_size = unsafe {
             (free_tail_ptr as *const u8).offset_from(free_head_ptr as *const u8) as Word
-                - size_of::<BlockHead>() as Word
+                - (size_of::<BlockHead>() + 8) as Word
         };
 
         unsafe {
@@ -343,6 +370,7 @@ impl TLSF {
             (*free_head_ptr).set_free();
             (*free_head_ptr).set_prev_used();
             (*free_head_ptr).set_next_used();
+
             (*free_tail_ptr).set_size(coalesced_size);
             (*free_tail_ptr).set_free();
             (*free_tail_ptr).set_prev_used();

@@ -1,4 +1,4 @@
-use crate::block::{BlockHead, BlockInterface, BlockTail};
+use crate::block::{BlockHead, BlockInterface, BlockTail, FreeBlockHead};
 use crate::tlsf::TLSF;
 
 impl TLSF {
@@ -22,14 +22,14 @@ impl TLSF {
     pub(crate) fn head_from_tail(block_tail_ptr: *mut BlockTail) -> *mut BlockHead {
         unsafe {
             let block_size = (*block_tail_ptr).size();
-            block_tail_ptr.byte_sub(size_of::<BlockHead>() + block_size as usize) as *mut BlockHead
+            block_tail_ptr.byte_sub(size_of::<BlockHead>() + 8 + block_size as usize) as *mut BlockHead
         }
     }
 
     pub(crate) fn tail_from_head(block_head_ptr: *mut BlockHead) -> *mut BlockTail {
         unsafe {
             let block_size = (*block_head_ptr).size();
-            block_head_ptr.byte_add(size_of::<BlockHead>() + block_size as usize) as *mut BlockTail
+            block_head_ptr.byte_add(size_of::<BlockHead>() + 8 + block_size as usize) as *mut BlockTail
         }
     }
 
