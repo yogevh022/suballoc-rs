@@ -1,87 +1,77 @@
-use crate::tlsf::{NEXT_USED_BIT_MASK, PREV_USED_BIT_MASK, SIZE_MASK, USED_BIT_MASK, Word};
+use crate::tlsf::Word;
 use std::ptr::NonNull;
+
+pub(crate) const BLOCK_ALIGNMENT: Word = 8;
+pub(crate) const BLOCK_HEAD_SIZE: Word = size_of::<BlockHead>() as Word + 8; // 8 is space for link ptr
+pub(crate) const BLOCK_TAIL_SIZE: Word = size_of::<BlockTail>() as Word;
+pub(crate) const BLOCK_META_SIZE: Word = BLOCK_HEAD_SIZE + BLOCK_TAIL_SIZE;
+
+pub(crate) struct BitFlags;
+impl BitFlags {
+    pub const USED: Word = 0b1;
+    pub const PREV_USED: Word = 0b10;
+    pub const NEXT_USED: Word = 0b100;
+    pub const SIZE_MASK: Word = !0b111;
+}
+
+pub(crate) trait BlockPtr<T: BlockInterface> {
+    unsafe fn deref_mut<'a>(&self) -> &'a mut T;
+    unsafe fn block_add<P>(&self, offset: usize) -> *mut P;
+    unsafe fn block_sub<P>(&self, offset: usize) -> *mut P;
+}
+
+impl<T: BlockInterface> BlockPtr<T> for *mut T {
+    unsafe fn deref_mut<'a>(&self) -> &'a mut T {
+        unsafe { &mut **self }
+    }
+    unsafe fn block_add<P>(&self, offset: usize) -> *mut P {
+        unsafe { (*self).byte_add(offset) as *mut P }
+    }
+    unsafe fn block_sub<P>(&self, offset: usize) -> *mut P {
+        unsafe { (*self).byte_sub(offset) as *mut P }
+    }
+}
 
 pub(crate) trait BlockInterface {
     #[inline(always)]
     fn size(&self) -> Word {
-        let ptr = self as *const _ as *const BlockHead;
-        unsafe { (*ptr).size_and_flags & SIZE_MASK }
+        let ptr = self as *const _ as *const Word;
+        unsafe { *ptr & BitFlags::SIZE_MASK }
     }
     #[inline(always)]
-    fn set_size(&mut self, size: Word) {
-        let ptr = self as *mut _ as *mut BlockHead;
-        unsafe { (*ptr).size_and_flags = size }
+    fn flags(&self) -> Word {
+        let ptr = self as *const _ as *const Word;
+        unsafe { *ptr & !BitFlags::SIZE_MASK }
     }
     #[inline(always)]
-    fn used(&self) -> bool {
-        let ptr = self as *const _ as *const BlockHead;
-        unsafe { ((*ptr).size_and_flags & USED_BIT_MASK) != 0 }
+    fn set_size_flags(&mut self, word: Word) {
+        let ptr = self as *mut _ as *mut Word;
+        unsafe { *ptr = word }
     }
     #[inline(always)]
-    fn set_used(&mut self) {
-        let ptr = self as *mut _ as *mut BlockHead;
-        unsafe { (*ptr).size_and_flags |= USED_BIT_MASK }
+    fn set_flags(&mut self, flags: Word) {
+        let ptr = self as *mut _ as *mut Word;
+        unsafe { *ptr = (*ptr & BitFlags::SIZE_MASK) | flags }
     }
     #[inline(always)]
-    fn set_free(&mut self) {
-        let ptr = self as *mut _ as *mut BlockHead;
-        unsafe { (*ptr).size_and_flags &= !USED_BIT_MASK }
+    fn or_flags(&mut self, flags: Word) {
+        let ptr = self as *mut _ as *mut Word;
+        unsafe { *ptr |= flags }
     }
     #[inline(always)]
-    fn prev_used(&self) -> bool {
-        let ptr = self as *const _ as *const BlockHead;
-        unsafe { ((*ptr).size_and_flags & PREV_USED_BIT_MASK) != 0 }
-    }
-    #[inline(always)]
-    fn set_prev_used(&mut self) {
-        let ptr = self as *mut _ as *mut BlockHead;
-        unsafe { (*ptr).size_and_flags |= PREV_USED_BIT_MASK }
-    }
-    #[inline(always)]
-    fn set_prev_free(&mut self) {
-        let ptr = self as *mut _ as *mut BlockHead;
-        unsafe { (*ptr).size_and_flags &= !PREV_USED_BIT_MASK }
+    fn clear_or_flags(&mut self, flags: Word) {
+        let ptr = self as *mut _ as *mut Word;
+        unsafe { *ptr &= !flags }
     }
     #[inline(always)]
     fn next_used(&self) -> bool {
-        let ptr = self as *const _ as *const BlockHead;
-        unsafe { ((*ptr).size_and_flags & NEXT_USED_BIT_MASK) != 0 }
+        let ptr = self as *const _ as *const Word;
+        unsafe { (*ptr & BitFlags::NEXT_USED) != 0 }
     }
     #[inline(always)]
-    fn set_next_free(&mut self) {
-        let ptr = self as *mut _ as *mut BlockHead;
-        unsafe { (*ptr).size_and_flags &= !NEXT_USED_BIT_MASK }
-    }
-    #[inline(always)]
-    fn set_next_used(&mut self) {
-        let ptr = self as *mut _ as *mut BlockHead;
-        unsafe { (*ptr).size_and_flags |= NEXT_USED_BIT_MASK }
-    }
-}
-
-pub(crate) trait FreeBlockInterface {
-    #[inline(always)]
-    fn next(&self) -> Option<NonNull<FreeBlockHead>> {
-        let ptr = self as *const _ as *const FreeBlockHead;
-        unsafe { (*ptr).next }
-    }
-
-    #[inline(always)]
-    fn set_next(&mut self, next: Option<NonNull<FreeBlockHead>>) {
-        let ptr = self as *mut _ as *mut FreeBlockHead;
-        unsafe { (*ptr).next = next }
-    }
-
-    #[inline(always)]
-    fn prev(&self) -> Option<NonNull<FreeBlockHead>> {
-        let ptr = self as *const _ as *const FreeBlockHead;
-        unsafe { (*ptr).prev }
-    }
-
-    #[inline(always)]
-    fn set_prev(&mut self, prev: Option<NonNull<FreeBlockHead>>) {
-        let ptr = self as *mut _ as *mut FreeBlockHead;
-        unsafe { (*ptr).prev = prev }
+    fn prev_used(&self) -> bool {
+        let ptr = self as *const _ as *const Word;
+        unsafe { (*ptr & BitFlags::PREV_USED) != 0 }
     }
 }
 
@@ -107,4 +97,20 @@ pub(crate) struct FreeBlockHead {
 }
 
 impl BlockInterface for FreeBlockHead {}
-impl FreeBlockInterface for FreeBlockHead {}
+
+impl FreeBlockHead {
+    #[inline(always)]
+    pub(crate) fn set_next(&mut self, next: Option<NonNull<FreeBlockHead>>) {
+        self.next = next
+    }
+
+    #[inline(always)]
+    pub(crate) fn prev(&self) -> Option<NonNull<FreeBlockHead>> {
+        self.prev
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_prev(&mut self, prev: Option<NonNull<FreeBlockHead>>) {
+        self.prev = prev
+    }
+}

@@ -1,8 +1,7 @@
 mod block;
-mod core;
+mod old;
 mod meta;
-mod nav;
-mod test;
 pub mod tlsf;
 
-pub use core::{SubAllocator, SubAllocatorError};
+pub use old::{OldSubAllocator, OldSubAllocatorError};
+pub use tlsf::{SubAllocator, AllocError, AllocResult, Word};

@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 #[derive(Debug, Clone, Copy)]
-pub enum SubAllocatorError {
+pub enum OldSubAllocatorError {
     OutOfMemory,
     InvalidAllocation,
 }
@@ -28,20 +28,20 @@ impl MemBlock {
 }
 
 #[derive(Debug, Clone)]
-pub struct SubAllocator {
+pub struct OldSubAllocator {
     capacity: usize,
     pub free_blocks_indices: Vec<usize>,
     pub free_blocks: Vec<Option<MemBlock>>,
     pub used_blocks: Vec<MemBlock>,
 }
 
-impl SubAllocator {
+impl OldSubAllocator {
     pub fn new(capacity: usize) -> Self {
         let mut free_blocks = vec![None; capacity];
         free_blocks[0] = Some(MemBlock::new(capacity));
         let mut free_blocks_indices = Vec::with_capacity(capacity);
         free_blocks_indices.push(0);
-        SubAllocator {
+        OldSubAllocator {
             capacity,
             free_blocks_indices,
             free_blocks,
@@ -62,7 +62,7 @@ impl SubAllocator {
     }
 
     /// allocate the requested size, return allocation start index, error if out of memory
-    pub fn allocate(&mut self, requested_size: usize) -> Result<usize, SubAllocatorError> {
+    pub fn allocate(&mut self, requested_size: usize) -> Result<usize, OldSubAllocatorError> {
         debug_assert!(requested_size > 0);
         for (idx_i, &idx) in self.free_blocks_indices.iter().enumerate() {
             let mut block = self.free_blocks[idx].unwrap();
@@ -93,7 +93,7 @@ impl SubAllocator {
             self.used_blocks[idx] = block;
             return Ok(idx);
         }
-        Err(SubAllocatorError::OutOfMemory)
+        Err(OldSubAllocatorError::OutOfMemory)
     }
 
     /// deallocate by allocation start index
