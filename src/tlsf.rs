@@ -1,6 +1,6 @@
 use crate::block::{
     BLOCK_ALIGNMENT, BLOCK_META_SIZE, BLOCK_TAIL_SIZE, BitFlags, BlockHead, BlockInterface,
-    BlockPtr, BlockTail, FreeBlockHead, PACKED_NONE_PTR,
+    BlockPtr, BlockTail, FreeBlockHead, PACKED_NONE_DOUBLE_PTR, PACKED_NONE_PTR,
 };
 use std::fmt::Debug;
 
@@ -17,45 +17,42 @@ pub enum AllocError {
 }
 
 pub struct SubAllocator {
-    pub capacity: Word,
-    pub mem: Box<[u8]>, // fixme pub
-    pub fl_bitmap: Word,
-    pub sl_bitmaps: [Word; WORD_BITS as usize],
-    pub free_blocks: [[Option<*mut FreeBlockHead>; WORD_BITS as usize]; WORD_BITS as usize],
+    capacity: Word,
+    pub(crate) mem: Box<[u8]>,
+    fl_bitmap: Word,
+    sl_bitmaps: [Word; WORD_BITS as usize],
+    free_blocks: [[Option<*mut FreeBlockHead>; WORD_BITS as usize]; WORD_BITS as usize],
 }
 
 impl SubAllocator {
     pub fn new(capacity: Word) -> Self {
-        assert!(capacity > 0);
+        assert_ne!(capacity, 0);
         assert_eq!(capacity % 8, 0);
         let mem = Self::init_mem(capacity);
-        let mut tlsf_instance = Self {
+        let mut instance = Self {
             capacity: Self::strip_meta(mem.len() as Word),
             mem,
             fl_bitmap: 0,
             sl_bitmaps: [0; WORD_BITS as usize],
             free_blocks: std::array::from_fn(|_| std::array::from_fn(|_| None)),
         };
-        tlsf_instance.pushf_free_link(tlsf_instance.mem.as_ptr() as _);
-        tlsf_instance
+        instance.pushf_free_link(instance.mem.as_ptr() as _);
+        instance
     }
 
     fn init_mem(capacity: Word) -> Box<[u8]> {
         let mut mem = vec![0u8; capacity as usize].into_boxed_slice();
-        let mem_ptr = mem.as_mut_ptr();
         let user_size = Self::strip_meta(capacity);
+        let head_ptr = mem.as_mut_ptr() as *mut FreeBlockHead;
+        let tail_ptr = Self::tail_from_head_ptr(head_ptr as _, user_size);
 
         let size_flags = user_size | BitFlags::PREV_USED | BitFlags::NEXT_USED;
         unsafe {
-            let initial_head = (mem_ptr as *mut FreeBlockHead).deref_mut();
-            initial_head.set_size_flags(size_flags);
-            initial_head.set_prev_link(PACKED_NONE_PTR);
-            initial_head.set_next_link(PACKED_NONE_PTR);
-        }
-        let mem_tail = mem_ptr.wrapping_add(capacity as usize - size_of::<BlockTail>());
-        unsafe {
-            let initial_tail = (mem_tail as *mut BlockTail).deref_mut();
-            initial_tail.set_size_flags(size_flags);
+            let head = head_ptr.deref_mut();
+            let tail = tail_ptr.deref_mut();
+            tail.set_size_flags(size_flags);
+            head.set_size_flags(size_flags);
+            head.set_links(PACKED_NONE_DOUBLE_PTR);
         }
         mem
     }
@@ -90,14 +87,16 @@ impl SubAllocator {
         match last_head_opt {
             Some(last_head_ptr) => {
                 // pack links
-                let packed_block_head_ptr = self.mem_offset_from_ptr(block_head_ptr);
+                let packed_block_head_ptr = self.mem_offset_from_ptr(block_head_ptr) as u64;
                 let packed_last_head_ptr = self.mem_offset_from_ptr(last_head_ptr);
-                unsafe { (*last_head_ptr).set_prev_link(packed_block_head_ptr) };
+                unsafe {
+                    (*last_head_ptr)
+                        .set_links((PACKED_NONE_PTR << WORD_BITS) as u64 | packed_block_head_ptr)
+                };
                 block_head.set_next_link(packed_last_head_ptr);
             }
-            None => block_head.set_next_link(PACKED_NONE_PTR),
+            None => block_head.set_links(PACKED_NONE_DOUBLE_PTR),
         }
-        block_head.set_prev_link(PACKED_NONE_PTR);
         self.set_bitmap_index_available(fli, sli);
     }
 
@@ -342,6 +341,27 @@ impl SubAllocator {
         self.pushf_free_link(coalesced_head_ptr as _);
 
         Ok(())
+    }
+
+    pub fn capacity(&self) -> Word {
+        self.capacity
+    }
+
+    pub fn free(&self) -> Word {
+        let mut total_free: Word = 0;
+        for bin in self.free_blocks.iter().flatten() {
+            let mut link = *bin;
+            while let Some(head_ptr) = link {
+                let head = unsafe { head_ptr.deref_mut() };
+                if head.used() {
+                    total_free += head.size();
+                }
+                let (_, next_link_offset) = head.link_offsets();
+                let next_link = self.ptr_from_mem_offset::<FreeBlockHead>(next_link_offset);
+                link = next_link;
+            }
+        }
+        total_free
     }
 }
 

@@ -5,6 +5,7 @@ pub(crate) const BLOCK_HEAD_SIZE: Word = size_of::<BlockHead>() as Word;
 pub(crate) const BLOCK_TAIL_SIZE: Word = size_of::<BlockTail>() as Word;
 pub(crate) const BLOCK_META_SIZE: Word = BLOCK_HEAD_SIZE + BLOCK_TAIL_SIZE;
 pub(crate) const PACKED_NONE_PTR: Word = Word::MAX;
+pub(crate) const PACKED_NONE_DOUBLE_PTR: u64 = u64::MAX;
 const LOW_MASK: u64 = 0xFFFF_FFFF;
 const HIGH_MASK: u64 = !LOW_MASK;
 
@@ -61,6 +62,11 @@ pub(crate) trait BlockInterface {
         unsafe { *ptr &= !flags }
     }
     #[inline(always)]
+    fn used(&self) -> bool {
+        let ptr = self as *const _ as *const Word;
+        unsafe { (*ptr & BitFlags::USED) != 0 }
+    }
+    #[inline(always)]
     fn next_used(&self) -> bool {
         let ptr = self as *const _ as *const Word;
         unsafe { (*ptr & BitFlags::NEXT_USED) != 0 }
@@ -102,9 +108,13 @@ impl FreeBlockHead {
         (prev_link as Word, next_link as Word)
     }
     #[inline(always)]
+    pub(crate) fn set_links(&mut self, links: u64) {
+        self.links = links;
+    }
+    #[inline(always)]
     pub(crate) fn set_prev_link(&mut self, link: Word) {
         let links_masked = self.links & LOW_MASK;
-        self.links = links_masked | ((link as u64) << 32);
+        self.links = links_masked | ((link as u64) << WORD_BITS);
     }
     #[inline(always)]
     pub(crate) fn set_next_link(&mut self, link: Word) {
