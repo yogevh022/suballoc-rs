@@ -1,10 +1,11 @@
-use crate::tlsf::Word;
-use std::ptr::NonNull;
+use crate::tlsf::{Word, WORD_BITS};
 
 pub(crate) const BLOCK_ALIGNMENT: Word = 8;
-pub(crate) const BLOCK_HEAD_SIZE: Word = size_of::<BlockHead>() as Word + 8; // 8 is space for link ptr
+pub(crate) const BLOCK_HEAD_SIZE: Word = size_of::<BlockHead>() as Word;
 pub(crate) const BLOCK_TAIL_SIZE: Word = size_of::<BlockTail>() as Word;
 pub(crate) const BLOCK_META_SIZE: Word = BLOCK_HEAD_SIZE + BLOCK_TAIL_SIZE;
+const LOW_MASK: u64 = 0xFFFF_FFFF;
+const HIGH_MASK: u64 = !LOW_MASK;
 
 pub(crate) struct BitFlags;
 impl BitFlags {
@@ -49,11 +50,6 @@ pub(crate) trait BlockInterface {
         unsafe { *ptr = word }
     }
     #[inline(always)]
-    fn set_flags(&mut self, flags: Word) {
-        let ptr = self as *mut _ as *mut Word;
-        unsafe { *ptr = (*ptr & BitFlags::SIZE_MASK) | flags }
-    }
-    #[inline(always)]
     fn or_flags(&mut self, flags: Word) {
         let ptr = self as *mut _ as *mut Word;
         unsafe { *ptr |= flags }
@@ -92,27 +88,26 @@ impl BlockInterface for BlockTail {}
 #[repr(C, align(8))]
 pub(crate) struct FreeBlockHead {
     size_and_flags: Word,
-    prev: Option<NonNull<FreeBlockHead>>,
-    next: Option<NonNull<FreeBlockHead>>,
+    links: u64, // 4 bytes prev, 4 bytes next, measured as offset from mem start
 }
 
 impl BlockInterface for FreeBlockHead {}
 
 impl FreeBlockHead {
     #[inline(always)]
-    pub(crate) fn prev_link(&self) -> Option<NonNull<FreeBlockHead>> {
-        self.prev
+    pub(crate) fn link_offsets(&self) -> (Word, Word) {
+        let next_link = self.links as Word;
+        let prev_link = (self.links >> WORD_BITS) as Word;
+        (prev_link as Word, next_link as Word)
     }
     #[inline(always)]
-    pub(crate) fn set_prev_link(&mut self, prev: Option<NonNull<FreeBlockHead>>) {
-        self.prev = prev
+    pub(crate) fn set_prev_link(&mut self, link: Word) {
+        let links_masked = self.links & LOW_MASK;
+        self.links = links_masked | ((link as u64) << 32);
     }
     #[inline(always)]
-    pub(crate) fn next_link(&self) -> Option<NonNull<FreeBlockHead>> {
-        self.next
-    }
-    #[inline(always)]
-    pub(crate) fn set_next_link(&mut self, next: Option<NonNull<FreeBlockHead>>) {
-        self.next = next
+    pub(crate) fn set_next_link(&mut self, link: Word) {
+        let links_masked = self.links & HIGH_MASK;
+        self.links = links_masked | (link as u64);
     }
 }

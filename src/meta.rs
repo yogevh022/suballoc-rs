@@ -80,13 +80,20 @@ impl SubAllocator {
         unsafe { tail_ptr.byte_offset_from(head_ptr) as Word - BLOCK_HEAD_SIZE }
     }
 
-    pub(crate) fn offset_from_ptr<T>(&self, ptr: *const T) -> Word {
+    pub(crate) fn mem_offset_from_ptr<T>(&self, ptr: *const T) -> Word {
         let ptr = ptr as *const u8;
         unsafe { ptr.offset_from(self.mem.as_ptr()) as Word }
     }
 
-    pub(crate) fn ptr_from_offset<T>(&self, offset: Word) -> *mut T {
+    pub(crate) fn ptr_from_mem_offset_unchecked<T>(&self, offset: Word) -> *mut T {
         unsafe { self.mem.as_ptr().offset(offset as isize) as *mut T }
+    }
+
+    pub(crate) fn ptr_from_mem_offset<T>(&self, ptr_offset: Word) -> Option<*mut T> {
+        match ptr_offset {
+            Word::MAX => None,
+            _ => unsafe { Some(self.mem.as_ptr().byte_add(ptr_offset as usize) as _) },
+        }
     }
 
     pub(crate) fn left_mask_from(index: Word) -> Word {
