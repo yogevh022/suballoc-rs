@@ -352,9 +352,7 @@ impl SubAllocator {
             let mut link = *bin;
             while let Some(head_ptr) = link {
                 let head = unsafe { head_ptr.deref_mut() };
-                if head.used() {
-                    total_free += head.size();
-                }
+                total_free += head.size();
                 let (_, next_link_offset) = head.link_offsets();
                 let next_link = self.ptr_from_mem_offset::<FreeBlockHead>(next_link_offset);
                 link = next_link;
