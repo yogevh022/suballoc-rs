@@ -87,14 +87,12 @@ impl SubAllocator {
         match last_head_opt {
             Some(last_head_ptr) => {
                 // pack links
-                let packed_block_head_ptr = self.mem_offset_from_ptr(block_head_ptr) as u64;
-                let packed_last_head_ptr = self.mem_offset_from_ptr(last_head_ptr);
-                unsafe {
-                    (*last_head_ptr).set_links(
-                        (packed_block_head_ptr << (WORD_BITS as u64)) | PACKED_NONE_PTR as u64,
-                    )
-                };
-                block_head.set_next_link(packed_last_head_ptr);
+                let packed_block_head_ptr = self.mem_offset_from_ptr(block_head_ptr);
+                let packed_last_head_ptr = self.mem_offset_from_ptr(last_head_ptr) as u64;
+                unsafe { (*last_head_ptr).set_prev_link(packed_block_head_ptr) };
+                block_head.set_links(
+                    ((PACKED_NONE_PTR as u64) << (WORD_BITS as u64)) | packed_last_head_ptr,
+                );
             }
             None => block_head.set_links(PACKED_NONE_DOUBLE_PTR),
         }
