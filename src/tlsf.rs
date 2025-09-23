@@ -90,8 +90,9 @@ impl SubAllocator {
                 let packed_block_head_ptr = self.mem_offset_from_ptr(block_head_ptr) as u64;
                 let packed_last_head_ptr = self.mem_offset_from_ptr(last_head_ptr);
                 unsafe {
-                    (*last_head_ptr)
-                        .set_links((PACKED_NONE_PTR << WORD_BITS) as u64 | packed_block_head_ptr)
+                    (*last_head_ptr).set_links(
+                        ((PACKED_NONE_PTR as u64) << (WORD_BITS as u64)) | packed_block_head_ptr,
+                    )
                 };
                 block_head.set_next_link(packed_last_head_ptr);
             }
