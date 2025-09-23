@@ -92,25 +92,27 @@ impl BlockInterface for BlockTail {}
 #[repr(C, align(8))]
 pub(crate) struct FreeBlockHead {
     size_and_flags: Word,
-    pub(crate) prev: Option<NonNull<FreeBlockHead>>,
-    pub(crate) next: Option<NonNull<FreeBlockHead>>,
+    prev: Option<NonNull<FreeBlockHead>>,
+    next: Option<NonNull<FreeBlockHead>>,
 }
 
 impl BlockInterface for FreeBlockHead {}
 
 impl FreeBlockHead {
     #[inline(always)]
-    pub(crate) fn set_next(&mut self, next: Option<NonNull<FreeBlockHead>>) {
-        self.next = next
-    }
-
-    #[inline(always)]
-    pub(crate) fn prev(&self) -> Option<NonNull<FreeBlockHead>> {
+    pub(crate) fn prev_link(&self) -> Option<NonNull<FreeBlockHead>> {
         self.prev
     }
-
     #[inline(always)]
-    pub(crate) fn set_prev(&mut self, prev: Option<NonNull<FreeBlockHead>>) {
+    pub(crate) fn set_prev_link(&mut self, prev: Option<NonNull<FreeBlockHead>>) {
         self.prev = prev
+    }
+    #[inline(always)]
+    pub(crate) fn next_link(&self) -> Option<NonNull<FreeBlockHead>> {
+        self.next
+    }
+    #[inline(always)]
+    pub(crate) fn set_next_link(&mut self, next: Option<NonNull<FreeBlockHead>>) {
+        self.next = next
     }
 }

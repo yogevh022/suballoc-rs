@@ -1,7 +1,59 @@
-use crate::block::{BLOCK_HEAD_SIZE, BLOCK_META_SIZE, BLOCK_TAIL_SIZE, BlockHead};
+use crate::block::{
+    BLOCK_HEAD_SIZE, BLOCK_META_SIZE, BLOCK_TAIL_SIZE, BitFlags, BlockHead, BlockInterface,
+    BlockPtr, BlockTail, FreeBlockHead,
+};
 use crate::tlsf::{SubAllocator, Word};
 
 impl SubAllocator {
+    pub(crate) unsafe fn next_block_meta<'a>(
+        head_ptr: *mut FreeBlockHead,
+        block_size: Word,
+    ) -> (&'a mut BlockHead, &'a mut BlockTail) {
+        let next_head_ptr = unsafe {
+            let next_head_offset = Self::with_meta(block_size) as _;
+            head_ptr.block_add::<BlockHead>(next_head_offset)
+        };
+        let next_head = unsafe { next_head_ptr.deref_mut() };
+        let next_size = next_head.size();
+        let next_tail_ptr = unsafe {
+            let next_tail_offset = Self::with_head(next_size) as _;
+            next_head_ptr.block_add::<BlockTail>(next_tail_offset)
+        };
+        unsafe { (next_head_ptr.deref_mut(), next_tail_ptr.deref_mut()) }
+    }
+
+    pub(crate) unsafe fn prev_block_meta<'a>(
+        head_ptr: *mut FreeBlockHead,
+    ) -> (&'a mut BlockHead, &'a mut BlockTail) {
+        unsafe {
+            let prev_tail_ptr = head_ptr.block_sub::<BlockTail>(BLOCK_TAIL_SIZE as _);
+            let prev_tail = prev_tail_ptr.deref_mut();
+            let prev_head_offset = Self::with_head(prev_tail.size()) as _;
+            let prev_head_ptr = prev_tail_ptr.block_sub::<BlockHead>(prev_head_offset);
+            (prev_head_ptr.deref_mut(), prev_tail)
+        }
+    }
+
+    fn ptr_eq_mem_start<T>(&self, ptr: *mut T) -> bool {
+        ptr as *const _ == self.mem.as_ptr()
+    }
+
+    fn ptr_eq_mem_end<T>(&self, ptr: *mut T) -> bool {
+        unsafe { ptr as *const _ == self.mem.as_ptr().add(self.mem.len()) }
+    }
+
+    pub(crate) fn is_block_last(&self, head_ptr: *mut BlockHead, block_size: Word) -> bool {
+        let block_end_ptr = unsafe {
+            let block_end_offset = Self::with_meta(block_size) as _;
+            head_ptr.block_add::<u8>(block_end_offset)
+        };
+        self.ptr_eq_mem_end(block_end_ptr)
+    }
+
+    pub(crate) fn is_block_first(&self, head_ptr: *mut BlockHead) -> bool {
+        self.ptr_eq_mem_start(head_ptr)
+    }
+
     pub(crate) const fn strip_meta(size: Word) -> Word {
         size - BLOCK_META_SIZE
     }
@@ -29,16 +81,6 @@ impl SubAllocator {
 
     pub(crate) fn ptr_from_offset<T>(&self, offset: Word) -> *mut T {
         unsafe { self.mem.as_ptr().offset(offset as isize) as *mut T }
-    }
-
-    pub(crate) fn ptr_eq_mem_start<T>(&self, ptr: *mut T) -> bool {
-        ptr as *const _ == self.mem.as_ptr()
-    }
-
-    pub(crate) fn ptr_eq_mem_end<T>(&self, ptr: *mut T) -> bool {
-        unsafe {
-            ptr as *const _ == self.mem.as_ptr().add(self.mem.len())
-        }
     }
 
     pub(crate) fn left_mask_from(index: Word) -> Word {

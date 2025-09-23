@@ -19,10 +19,10 @@ pub enum AllocError {
 
 pub struct SubAllocator {
     pub capacity: Word,
-    pub(crate) mem: Box<[u8]>,
-    fl_bitmap: Word,
-    sl_bitmaps: [Word; WORD_BITS as usize],
-    free_blocks: [[Option<NonNull<FreeBlockHead>>; WORD_BITS as usize]; WORD_BITS as usize],
+    pub mem: Box<[u8]>, // fixme not pub
+    pub fl_bitmap: Word,
+    pub sl_bitmaps: [Word; WORD_BITS as usize],
+    pub free_blocks: [[Option<NonNull<FreeBlockHead>>; WORD_BITS as usize]; WORD_BITS as usize],
 }
 
 impl SubAllocator {
@@ -50,8 +50,8 @@ impl SubAllocator {
         unsafe {
             let initial_head = (mem_ptr as *mut FreeBlockHead).deref_mut();
             initial_head.set_size_flags(size_flags);
-            initial_head.set_prev(None);
-            initial_head.set_next(None);
+            initial_head.set_prev_link(None);
+            initial_head.set_next_link(None);
         }
         let mem_tail = mem_ptr.wrapping_add(capacity as usize - size_of::<BlockTail>());
         unsafe {
@@ -65,12 +65,6 @@ impl SubAllocator {
         // this function assumes that the memory is already initialized with initial free block
         let head_ptr = unsafe { NonNull::new_unchecked(self.mem.as_ptr() as *mut FreeBlockHead) };
         self.pushf_free_link(head_ptr);
-    }
-
-    pub(crate) fn calc_sl_index_for_fl(size: Word, fl: Word) -> Word {
-        let base = 1 << fl;
-        let offset = size - base;
-        (offset << SLI_BITS) >> fl
     }
 
     fn set_bitmap_index_available(&mut self, fli: Word, sli: Word) {
@@ -101,10 +95,11 @@ impl SubAllocator {
         let last_head_opt = std::mem::replace(slot, Some(block_head_ptr));
         if let Some(last_head) = last_head_opt {
             unsafe {
-                (*last_head.as_ptr()).set_prev(Some(block_head_ptr));
+                (*last_head.as_ptr()).set_prev_link(Some(block_head_ptr));
             }
         }
-        block_head.set_next(last_head_opt);
+        block_head.set_next_link(last_head_opt);
+        block_head.set_prev_link(None);
 
         self.set_bitmap_index_available(fli, sli);
     }
@@ -113,10 +108,9 @@ impl SubAllocator {
         let slot = &mut self.free_blocks[fli as usize][sli as usize];
         let block_head_ptr = slot.take().unwrap();
 
-        let next_opt = unsafe { (*block_head_ptr.as_ptr()).next };
-        *slot = next_opt;
-        if let Some(next) = next_opt {
-            unsafe { (*next.as_ptr()).set_prev(None) };
+        *slot = unsafe { (*block_head_ptr.as_ptr()).next_link() };
+        if let Some(next) = slot {
+            unsafe { (*next.as_ptr()).set_prev_link(None) };
         } else {
             self.set_bitmap_index_empty(fli, sli);
         }
@@ -126,25 +120,31 @@ impl SubAllocator {
 
     fn remove_free_link(&mut self, fli: Word, sli: Word, head: *mut FreeBlockHead) {
         let head = unsafe { head.deref_mut() };
+
+        if let Some(next) = head.next_link() {
+            unsafe { (*next.as_ptr()).set_prev_link(head.prev_link()) };
+        }
+        if let Some(prev) = head.prev_link() {
+            unsafe { (*prev.as_ptr()).set_next_link(head.next_link()) };
+        }
+
         let slot = unsafe {
             self.free_blocks
                 .get_unchecked_mut(fli as usize)
                 .get_unchecked_mut(sli as usize)
         };
-
-        if let Some(next) = head.next {
-            unsafe { (*next.as_ptr()).prev = head.prev };
-        }
-        if let Some(prev) = head.prev {
-            unsafe { (*prev.as_ptr()).next = head.next };
-        }
-
         if slot.map_or(false, |x| x.as_ptr() == head) {
-            *slot = head.next;
+            *slot = head.next_link();
         }
         if slot.is_none() {
             self.set_bitmap_index_empty(fli, sli);
         }
+    }
+
+    fn calc_sl_index_for_fl(size: Word, fl: Word) -> Word {
+        let base = 1 << fl;
+        let offset = size - base;
+        (offset << SLI_BITS) >> fl
     }
 
     fn mapping_search(&self, size: Word) -> AllocResult<(Word, Word)> {
@@ -154,20 +154,22 @@ impl SubAllocator {
             return Err(AllocError::OutOfMemory);
         }
 
-        #[inline]
+        #[inline(always)]
         fn find_sl_for_fl(this: &SubAllocator, fl_idx: Word, size: Word) -> Option<Word> {
             let sl_idx = SubAllocator::calc_sl_index_for_fl(size, fl_idx);
-            let sl_mask = this.sl_bitmaps[fl_idx as usize] & SubAllocator::left_mask_from(sl_idx);
-            if sl_mask != 0 {
-                return Some(sl_idx);
+            let available_sl_mask =
+                this.sl_bitmaps[fl_idx as usize] & SubAllocator::left_mask_from(sl_idx);
+            if available_sl_mask != 0 {
+                let first_sl = available_sl_mask.trailing_zeros() as Word;
+                return Some(first_sl);
             }
             None
         }
 
         let first_fl = available_fl_mask.trailing_zeros() as Word;
         if first_fl == fl_idx {
-            if let Some(sl_idx) = find_sl_for_fl(self, first_fl, size) {
-                return Ok((first_fl, sl_idx));
+            if let Some(first_sl) = find_sl_for_fl(self, first_fl, size) {
+                return Ok((first_fl, first_sl));
             }
         }
 
@@ -187,44 +189,36 @@ impl SubAllocator {
         (fl_idx, sl_idx)
     }
 
-    fn push_leftover_block(&mut self, tail_ptr: *mut BlockTail, leftover_total_size: Word) {
+    fn push_leftover_block(&mut self, leftover_tail_ptr: *mut BlockTail, leftover_total_size: Word) {
         let leftover_use_size = Self::strip_meta(leftover_total_size);
         let size_flags = leftover_use_size | BitFlags::PREV_USED | BitFlags::NEXT_USED;
 
         unsafe {
-            tail_ptr.deref_mut().set_size_flags(size_flags);
             let leftover_head_offset = Self::with_head(leftover_use_size) as _;
-            let leftover_head_ptr = tail_ptr.block_sub::<FreeBlockHead>(leftover_head_offset);
+            let leftover_head_ptr = leftover_tail_ptr.block_sub::<FreeBlockHead>(leftover_head_offset);
             leftover_head_ptr.deref_mut().set_size_flags(size_flags);
+            leftover_tail_ptr.deref_mut().set_size_flags(size_flags);
 
             self.pushf_free_link(NonNull::new_unchecked(leftover_head_ptr));
         }
     }
 
-    fn use_entire_block(&mut self, block_ptr: *mut FreeBlockHead, block_size: Word) {
-        let block_end_ptr = unsafe {
-            let block_end_offset = Self::with_meta(block_size) as _;
-            block_ptr.block_add::<u8>(block_end_offset)
-        };
-        if self.ptr_eq_mem_end(block_end_ptr) {
+    fn set_next_prev_used(&mut self, head_ptr: *mut FreeBlockHead, block_size: Word) {
+        if self.is_block_last(head_ptr as _, block_size) {
             return;
         }
-
-        let next_head_ptr = unsafe {
-            let next_head_offset = Self::with_meta(block_size) as _;
-            block_ptr.block_add::<BlockHead>(next_head_offset)
-        };
-        let next_head = unsafe { next_head_ptr.deref_mut() };
-        let next_size = next_head.size();
-        let next_tail_ptr = unsafe {
-            let next_tail_offset = Self::with_head(next_size) as _;
-            next_head_ptr.block_add::<BlockTail>(next_tail_offset)
-        };
-
-        // update the next block metadata
+        let (next_head, next_tail) = unsafe { Self::next_block_meta(head_ptr, block_size) };
         next_head.or_flags(BitFlags::PREV_USED);
-        let next_tail = unsafe { next_tail_ptr.deref_mut() };
         next_tail.or_flags(BitFlags::PREV_USED);
+    }
+
+    fn set_prev_next_used(&mut self, head_ptr: *mut FreeBlockHead) {
+        if self.is_block_first(head_ptr as _) {
+            return;
+        }
+        let (prev_head, prev_tail) = unsafe { Self::prev_block_meta(head_ptr) };
+        prev_head.or_flags(BitFlags::NEXT_USED);
+        prev_tail.or_flags(BitFlags::NEXT_USED);
     }
 
     fn use_block(&mut self, head_ptr: *mut FreeBlockHead, used_size: Word) {
@@ -237,7 +231,7 @@ impl SubAllocator {
         };
 
         if leftover_total_size <= Self::align_up(BLOCK_META_SIZE + 1, BLOCK_ALIGNMENT) {
-            self.use_entire_block(head_ptr, block_size);
+            self.set_next_prev_used(head_ptr, block_size);
             let flags = BitFlags::USED | BitFlags::PREV_USED | BitFlags::NEXT_USED;
             unsafe {
                 head_ptr.deref_mut().or_flags(flags);
@@ -253,17 +247,7 @@ impl SubAllocator {
                 tail_ptr.deref_mut().set_size_flags(size_flags);
             }
         }
-
-        if !self.ptr_eq_mem_start(head_ptr) {
-            unsafe {
-                let prev_tail_ptr = head_ptr.block_sub::<BlockTail>(BLOCK_TAIL_SIZE as _);
-                let prev_tail = prev_tail_ptr.deref_mut();
-                let prev_head_offset = Self::with_head(prev_tail.size()) as _;
-                let prev_head_ptr = prev_tail_ptr.block_sub::<FreeBlockHead>(prev_head_offset);
-                prev_tail.or_flags(BitFlags::NEXT_USED);
-                prev_head_ptr.deref_mut().or_flags(BitFlags::NEXT_USED);
-            };
-        }
+        self.set_prev_next_used(head_ptr);
     }
 
     pub fn allocate(&mut self, size: Word) -> AllocResult<Word> {
@@ -339,14 +323,12 @@ impl SubAllocator {
 
         let head_size = head.size();
         let tail_ptr = unsafe { head_ptr.block_add::<BlockTail>(Self::with_head(head_size) as _) };
-
-        let block_end_ptr = unsafe { head_ptr.block_add::<u8>(Self::with_meta(head_size) as _) };
-        let coalesced_tail_ptr = match self.ptr_eq_mem_end(block_end_ptr) {
+        let coalesced_tail_ptr = match self.is_block_last(head_ptr, head_size) {
             true => tail_ptr,
             false => self.coalesce_next(head_ptr, tail_ptr, head, head_size),
         };
 
-        let coalesced_head_ptr = match self.ptr_eq_mem_start(head_ptr) {
+        let coalesced_head_ptr = match self.is_block_first(head_ptr) {
             true => head_ptr,
             false => self.coalesce_prev(head_ptr, head),
         };
