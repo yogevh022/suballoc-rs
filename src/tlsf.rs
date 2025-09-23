@@ -189,17 +189,20 @@ impl SubAllocator {
         (fl_idx, sl_idx)
     }
 
-    fn push_leftover_block(&mut self, leftover_tail_ptr: *mut BlockTail, leftover_total_size: Word) {
+    fn push_leftover_block(
+        &mut self,
+        leftover_tail_ptr: *mut BlockTail,
+        leftover_total_size: Word,
+    ) {
         let leftover_use_size = Self::strip_meta(leftover_total_size);
         let size_flags = leftover_use_size | BitFlags::PREV_USED | BitFlags::NEXT_USED;
 
         unsafe {
-            let leftover_head_offset = Self::with_head(leftover_use_size) as _;
-            let leftover_head_ptr = leftover_tail_ptr.block_sub::<FreeBlockHead>(leftover_head_offset);
+            let leftover_head_ptr = Self::head_from_tail_ptr(leftover_tail_ptr, leftover_use_size);
             leftover_head_ptr.deref_mut().set_size_flags(size_flags);
             leftover_tail_ptr.deref_mut().set_size_flags(size_flags);
 
-            self.pushf_free_link(NonNull::new_unchecked(leftover_head_ptr));
+            self.pushf_free_link(NonNull::new_unchecked(leftover_head_ptr as _));
         }
     }
 
@@ -221,32 +224,30 @@ impl SubAllocator {
         prev_tail.or_flags(BitFlags::NEXT_USED);
     }
 
-    fn use_block(&mut self, head_ptr: *mut FreeBlockHead, used_size: Word) {
+    fn set_block_used(&mut self, head_ptr: *mut FreeBlockHead, used_size: Word) {
         let block_size = unsafe { (*head_ptr).size() };
         let leftover_total_size = block_size - used_size;
+        let initial_tail_ptr = Self::tail_from_head_ptr(head_ptr as _, block_size);
 
-        let initial_tail_ptr = unsafe {
-            let initial_tail_offset = Self::with_head(block_size) as _;
-            head_ptr.block_add::<BlockTail>(initial_tail_offset)
-        };
-
-        if leftover_total_size <= Self::align_up(BLOCK_META_SIZE + 1, BLOCK_ALIGNMENT) {
-            self.set_next_prev_used(head_ptr, block_size);
-            let flags = BitFlags::USED | BitFlags::PREV_USED | BitFlags::NEXT_USED;
-            unsafe {
-                head_ptr.deref_mut().or_flags(flags);
-                initial_tail_ptr.deref_mut().or_flags(flags);
-            }
-        } else {
-            self.push_leftover_block(initial_tail_ptr, leftover_total_size);
-            let size_flags = used_size | BitFlags::USED | BitFlags::PREV_USED;
-            unsafe {
-                let tail_offset = Self::with_head(used_size) as _;
-                let tail_ptr = head_ptr.block_add::<BlockTail>(tail_offset);
-                head_ptr.deref_mut().set_size_flags(size_flags);
-                tail_ptr.deref_mut().set_size_flags(size_flags);
-            }
-        }
+        let (head, tail, size_flags) =
+            if leftover_total_size <= Self::align_up(BLOCK_META_SIZE + 1, BLOCK_ALIGNMENT) {
+                self.set_next_prev_used(head_ptr, block_size);
+                (
+                    unsafe { head_ptr.deref_mut() },
+                    unsafe { initial_tail_ptr.deref_mut() },
+                    block_size | BitFlags::USED | BitFlags::PREV_USED | BitFlags::NEXT_USED,
+                )
+            } else {
+                self.push_leftover_block(initial_tail_ptr, leftover_total_size);
+                let tail_ptr = Self::tail_from_head_ptr(head_ptr as _, used_size);
+                (
+                    unsafe { head_ptr.deref_mut() },
+                    unsafe { tail_ptr.deref_mut() },
+                    used_size | BitFlags::USED | BitFlags::PREV_USED,
+                )
+            };
+        head.set_size_flags(size_flags);
+        tail.set_size_flags(size_flags);
         self.set_prev_next_used(head_ptr);
     }
 
@@ -254,7 +255,7 @@ impl SubAllocator {
         let aligned_size = Self::align_up(size, BLOCK_ALIGNMENT);
         let (fli, sli) = self.mapping_search(aligned_size)?;
         let block_head_ptr = self.popf_free_link(fli, sli).as_ptr();
-        self.use_block(block_head_ptr, aligned_size);
+        self.set_block_used(block_head_ptr, aligned_size);
         Ok(self.offset_from_ptr(block_head_ptr))
     }
 
@@ -271,10 +272,7 @@ impl SubAllocator {
         };
         let next_head = unsafe { next_head_ptr.deref_mut() };
         let next_head_size = next_head.size();
-        let next_tail_ptr = unsafe {
-            let next_tail_offset = Self::with_head(next_head_size) as _;
-            next_head_ptr.block_add::<BlockTail>(next_tail_offset)
-        };
+        let next_tail_ptr = Self::tail_from_head_ptr(next_head_ptr, next_head_size);
 
         match head.next_used() {
             true => {
@@ -294,11 +292,8 @@ impl SubAllocator {
     fn coalesce_prev(&mut self, head_ptr: *mut BlockHead, head: &mut BlockHead) -> *mut BlockHead {
         let prev_tail_ptr = unsafe { head_ptr.block_sub::<BlockTail>(BLOCK_TAIL_SIZE as usize) };
         let prev_tail = unsafe { prev_tail_ptr.deref_mut() };
-        let prev_tail_size = prev_tail.size();
-        let prev_head_ptr = unsafe {
-            let prev_tail_offset = Self::with_head(prev_tail_size) as _;
-            prev_tail_ptr.block_sub::<BlockHead>(prev_tail_offset)
-        };
+        let prev_size = prev_tail.size();
+        let prev_head_ptr = Self::head_from_tail_ptr(prev_tail_ptr, prev_size);
 
         match head.prev_used() {
             true => {
@@ -308,7 +303,7 @@ impl SubAllocator {
                 head_ptr
             }
             false => {
-                let (fli, sli) = self.mapping_insert(prev_tail_size);
+                let (fli, sli) = self.mapping_insert(prev_size);
                 self.remove_free_link(fli, sli, prev_head_ptr as _);
                 prev_head_ptr
             }
@@ -318,11 +313,10 @@ impl SubAllocator {
     pub fn deallocate(&mut self, addr: Word) -> AllocResult<()> {
         let head_ptr: *mut BlockHead = self.ptr_from_offset(addr);
         let head = unsafe { &mut *(head_ptr) };
-
         debug_assert!(head.flags() & BitFlags::USED == BitFlags::USED);
 
         let head_size = head.size();
-        let tail_ptr = unsafe { head_ptr.block_add::<BlockTail>(Self::with_head(head_size) as _) };
+        let tail_ptr = Self::tail_from_head_ptr(head_ptr, head_size);
         let coalesced_tail_ptr = match self.is_block_last(head_ptr, head_size) {
             true => tail_ptr,
             false => self.coalesce_next(head_ptr, tail_ptr, head, head_size),
@@ -341,7 +335,6 @@ impl SubAllocator {
             let coalesced_tail = coalesced_tail_ptr.deref_mut();
             coalesced_tail.set_size_flags(size_flags);
         }
-
         self.pushf_free_link(unsafe { NonNull::new_unchecked(coalesced_head_ptr as _) });
 
         Ok(())

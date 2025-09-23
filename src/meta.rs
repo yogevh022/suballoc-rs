@@ -5,6 +5,16 @@ use crate::block::{
 use crate::tlsf::{SubAllocator, Word};
 
 impl SubAllocator {
+    pub(crate) fn tail_from_head_ptr(head_ptr: *mut BlockHead, block_size: Word) -> *mut BlockTail {
+        let tail_offset = Self::with_head(block_size) as _;
+        unsafe { head_ptr.block_add::<BlockTail>(tail_offset) }
+    }
+
+    pub(crate) fn head_from_tail_ptr(tail_ptr: *mut BlockTail, block_size: Word) -> *mut BlockHead {
+        let head_offset = Self::with_head(block_size) as _;
+        unsafe { tail_ptr.block_sub::<BlockHead>(head_offset) }
+    }
+
     pub(crate) unsafe fn next_block_meta<'a>(
         head_ptr: *mut FreeBlockHead,
         block_size: Word,
@@ -15,10 +25,7 @@ impl SubAllocator {
         };
         let next_head = unsafe { next_head_ptr.deref_mut() };
         let next_size = next_head.size();
-        let next_tail_ptr = unsafe {
-            let next_tail_offset = Self::with_head(next_size) as _;
-            next_head_ptr.block_add::<BlockTail>(next_tail_offset)
-        };
+        let next_tail_ptr = Self::tail_from_head_ptr(next_head_ptr, next_size);
         unsafe { (next_head_ptr.deref_mut(), next_tail_ptr.deref_mut()) }
     }
 
@@ -28,8 +35,7 @@ impl SubAllocator {
         unsafe {
             let prev_tail_ptr = head_ptr.block_sub::<BlockTail>(BLOCK_TAIL_SIZE as _);
             let prev_tail = prev_tail_ptr.deref_mut();
-            let prev_head_offset = Self::with_head(prev_tail.size()) as _;
-            let prev_head_ptr = prev_tail_ptr.block_sub::<BlockHead>(prev_head_offset);
+            let prev_head_ptr = Self::head_from_tail_ptr(prev_tail_ptr, prev_tail.size());
             (prev_head_ptr.deref_mut(), prev_tail)
         }
     }
