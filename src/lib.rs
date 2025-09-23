@@ -1,3 +1,5 @@
-mod test;
-mod core;
-pub use core::{SubAllocator, SubAllocatorError};
+mod block;
+mod meta;
+mod tlsf;
+
+pub use tlsf::{SubAllocator, AllocError, AllocResult, Word};
