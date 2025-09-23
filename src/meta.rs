@@ -1,6 +1,6 @@
 use crate::block::{
-    BLOCK_HEAD_SIZE, BLOCK_META_SIZE, BLOCK_TAIL_SIZE, BitFlags, BlockHead, BlockInterface,
-    BlockPtr, BlockTail, FreeBlockHead,
+    BLOCK_HEAD_SIZE, BLOCK_META_SIZE, BLOCK_TAIL_SIZE, BlockHead, BlockInterface, BlockPtr,
+    BlockTail, FreeBlockHead, PACKED_NONE_PTR,
 };
 use crate::tlsf::{SubAllocator, Word};
 
@@ -81,8 +81,7 @@ impl SubAllocator {
     }
 
     pub(crate) fn mem_offset_from_ptr<T>(&self, ptr: *const T) -> Word {
-        let ptr = ptr as *const u8;
-        unsafe { ptr.offset_from(self.mem.as_ptr()) as Word }
+        (ptr as u64 - self.mem.as_ptr() as u64) as Word
     }
 
     pub(crate) fn ptr_from_mem_offset_unchecked<T>(&self, offset: Word) -> *mut T {
@@ -91,7 +90,7 @@ impl SubAllocator {
 
     pub(crate) fn ptr_from_mem_offset<T>(&self, ptr_offset: Word) -> Option<*mut T> {
         match ptr_offset {
-            Word::MAX => None,
+            PACKED_NONE_PTR => None,
             _ => unsafe { Some(self.mem.as_ptr().byte_add(ptr_offset as usize) as _) },
         }
     }
