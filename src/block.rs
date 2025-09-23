@@ -4,6 +4,7 @@ pub(crate) const BLOCK_ALIGNMENT: Word = 8;
 pub(crate) const BLOCK_HEAD_SIZE: Word = size_of::<BlockHead>() as Word;
 pub(crate) const BLOCK_TAIL_SIZE: Word = size_of::<BlockTail>() as Word;
 pub(crate) const BLOCK_META_SIZE: Word = BLOCK_HEAD_SIZE + BLOCK_TAIL_SIZE;
+pub(crate) const PACKED_NONE_PTR: Word = Word::MAX;
 const LOW_MASK: u64 = 0xFFFF_FFFF;
 const HIGH_MASK: u64 = !LOW_MASK;
 
