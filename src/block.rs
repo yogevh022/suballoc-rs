@@ -1,7 +1,8 @@
-use crate::tlsf::{Word, WORD_BITS};
+use crate::meta::{byte_add_into, byte_sub_into, with_head};
+use crate::tlsf::{WORD_BITS, Word};
 
 pub(crate) const BLOCK_ALIGNMENT: Word = 8;
-pub(crate) const BLOCK_HEAD_SIZE: Word = size_of::<BlockHead>() as Word;
+pub(crate) const BLOCK_HEAD_SIZE: Word = size_of::<UsedBlockHead>() as Word;
 pub(crate) const BLOCK_TAIL_SIZE: Word = size_of::<BlockTail>() as Word;
 pub(crate) const BLOCK_META_SIZE: Word = BLOCK_HEAD_SIZE + BLOCK_TAIL_SIZE;
 pub(crate) const PACKED_NONE_PTR: Word = Word::MAX;
@@ -15,24 +16,6 @@ impl BitFlags {
     pub const PREV_USED: Word = 0b10;
     pub const NEXT_USED: Word = 0b100;
     pub const SIZE_MASK: Word = !0b111;
-}
-
-pub(crate) trait BlockPtr<T: BlockInterface> {
-    unsafe fn deref_mut<'a>(&self) -> &'a mut T;
-    unsafe fn block_add<P>(&self, offset: usize) -> *mut P;
-    unsafe fn block_sub<P>(&self, offset: usize) -> *mut P;
-}
-
-impl<T: BlockInterface> BlockPtr<T> for *mut T {
-    unsafe fn deref_mut<'a>(&self) -> &'a mut T {
-        unsafe { &mut **self }
-    }
-    unsafe fn block_add<P>(&self, offset: usize) -> *mut P {
-        unsafe { (*self).byte_add(offset) as *mut P }
-    }
-    unsafe fn block_sub<P>(&self, offset: usize) -> *mut P {
-        unsafe { (*self).byte_sub(offset) as *mut P }
-    }
 }
 
 pub(crate) trait BlockInterface {
@@ -77,47 +60,83 @@ pub(crate) trait BlockInterface {
         unsafe { (*ptr & BitFlags::PREV_USED) != 0 }
     }
 }
-
-#[repr(C, align(8))]
-pub(crate) struct BlockHead {
-    size_and_flags: Word,
+pub(crate) trait BlockTailPtrInterface {
+    #[inline(always)]
+    fn deref<'a>(&mut self) -> &'a mut BlockTail {
+        unsafe { &mut **(self as *const _ as *const *mut BlockTail) }
+    }
+    #[inline(always)]
+    fn head_ptr(&self, block_size: Word) -> *mut BlockHead {
+        let ptr = unsafe { *(self as *const _ as *const *mut BlockTail) };
+        let head_offset = with_head(block_size) as _;
+        unsafe { byte_sub_into(ptr, head_offset) }
+    }
+}
+pub(crate) trait BlockHeadPtrInterface {
+    #[inline(always)]
+    fn deref<'a>(&mut self) -> &'a mut BlockHead {
+        unsafe { &mut **(self as *const _ as *const *mut BlockHead) }
+    }
+    #[inline(always)]
+    fn tail_ptr(&self, block_size: Word) -> *mut BlockTail {
+        let ptr = unsafe { *(self as *const _ as *const *mut BlockHead) };
+        let tail_offset = with_head(block_size) as _;
+        unsafe { byte_add_into(ptr, tail_offset) }
+    }
 }
 
-impl BlockInterface for BlockHead {}
-
-#[repr(C, align(8))]
-pub(crate) struct BlockTail {
-    size_and_flags: Word,
+pub(crate) union BlockHead {
+    pub free: FreeBlockHead,
+    pub used: UsedBlockHead,
 }
 
-impl BlockInterface for BlockTail {}
+impl BlockHead {
+    pub fn as_free(&mut self) -> &mut FreeBlockHead {
+        unsafe { &mut self.free }
+    }
+}
 
 #[repr(C, align(8))]
+#[derive(Debug, Copy, Clone)]
 pub(crate) struct FreeBlockHead {
     size_and_flags: Word,
     links: u64, // 4 bytes prev, 4 bytes next, measured as offset from mem start
 }
+impl BlockInterface for BlockHead {}
+impl BlockHeadPtrInterface for *mut BlockHead {}
 
-impl BlockInterface for FreeBlockHead {}
+#[repr(C, align(8))]
+#[derive(Debug, Copy, Clone)]
+pub(crate) struct UsedBlockHead {
+    size_and_flags: Word,
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub(crate) struct BlockTail {
+    size_and_flags: Word,
+}
+impl BlockInterface for BlockTail {}
+impl BlockTailPtrInterface for *mut BlockTail {}
 
 impl FreeBlockHead {
     #[inline(always)]
-    pub(crate) fn link_offsets(&self) -> (Word, Word) {
+    pub fn link_offsets(&self) -> (Word, Word) {
         let next_link = self.links as Word;
         let prev_link = (self.links >> WORD_BITS) as Word;
         (prev_link as Word, next_link as Word)
     }
     #[inline(always)]
-    pub(crate) fn set_links(&mut self, links: u64) {
+    pub fn set_links(&mut self, links: u64) {
         self.links = links;
     }
     #[inline(always)]
-    pub(crate) fn set_prev_link(&mut self, link: Word) {
+    pub fn set_prev_link(&mut self, link: Word) {
         let links_masked = self.links & LOW_MASK;
         self.links = links_masked | ((link as u64) << WORD_BITS);
     }
     #[inline(always)]
-    pub(crate) fn set_next_link(&mut self, link: Word) {
+    pub fn set_next_link(&mut self, link: Word) {
         let links_masked = self.links & HIGH_MASK;
         self.links = links_masked | (link as u64);
     }
