@@ -303,6 +303,12 @@ impl SubAllocator {
         let mut prev_head_ptr = prev_tail_ptr.head_ptr(prev_size);
         let prev_head = prev_head_ptr.deref();
 
+        let c = self.mem_offset_from_ptr(head_ptr);
+        let h = self.mem_offset_from_ptr(prev_head_ptr);
+        let t = self.mem_offset_from_ptr(prev_tail_ptr);
+
+        dbg!(c, h, t);
+
         match head.prev_used() {
             true => {
                 prev_tail.clear_or_flags(BitFlags::NEXT_USED);
@@ -318,9 +324,11 @@ impl SubAllocator {
     }
 
     pub fn deallocate(&mut self, addr: Word) -> AllocResult<()> {
-        let head_ptr: *mut BlockHead = self.ptr_from_mem_offset_unchecked(addr);
-        let head = unsafe { &mut *(head_ptr) };
+        let mut head_ptr: *mut BlockHead = self.ptr_from_mem_offset_unchecked(addr);
+        let head = head_ptr.deref();
         debug_assert!(head.flags() & BitFlags::USED == BitFlags::USED);
+
+        dbg!(addr);
 
         let head_size = head.size();
         let tail_ptr = head_ptr.tail_ptr(head_size);
@@ -361,6 +369,10 @@ impl SubAllocator {
             }
         }
         total_free
+    }
+
+    pub fn dbg(&self) { //fixme
+        println!("{:?}",&self.mem);
     }
 }
 

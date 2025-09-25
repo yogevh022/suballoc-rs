@@ -111,7 +111,7 @@ pub(crate) struct UsedBlockHead {
     size_and_flags: Word,
 }
 
-#[repr(C)]
+#[repr(C, align(8))]
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct BlockTail {
     size_and_flags: Word,
