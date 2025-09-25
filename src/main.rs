@@ -9,10 +9,8 @@ fn main() {
         alocs.push(a);
     }
 
-    sa.dbg();
     for i in alocs {
         sa.deallocate(i).unwrap();
-        sa.dbg();
     }
     dbg!(sa.capacity(), sa.free());
 }
