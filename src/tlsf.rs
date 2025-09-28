@@ -321,9 +321,7 @@ impl SubAllocator {
         let mut head_ptr: *mut BlockHead = self.ptr_from_mem_offset_unchecked(addr);
         let head = head_ptr.deref();
         debug_assert!(head.flags() & BitFlags::USED == BitFlags::USED);
-
-        dbg!(addr);
-
+        
         let head_size = head.size();
         let tail_ptr = head_ptr.tail_ptr(head_size);
         let mut coalesced_tail_ptr = match self.is_block_last(head_ptr, head_size) {
